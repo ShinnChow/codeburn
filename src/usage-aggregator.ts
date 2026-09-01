@@ -472,6 +472,10 @@ function unionDaysForPeriod(
   periodInfo: PeriodInfo,
   daysSelection: Set<string> | null,
   sliceHistorical?: (day: DailyEntry) => DailyEntry,
+  /// Historical days from the parse this period already ran. They are evidence
+  /// about the same dates the cache is answering for, so where one explains
+  /// more of a day than the other, that one is used (#1217).
+  liveHistoricalDays: DailyEntry[] = [],
 ): DailyEntry[] {
   const now = new Date()
   const yesterdayStr = toDateString(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))
@@ -485,8 +489,24 @@ function unionDaysForPeriod(
   // never reaches the slicer (which tallies what it could not attribute).
   const selectedCacheDays = daysSelection ? cacheDays.filter(d => daysSelection.has(d.date)) : cacheDays
   const historicalDays = sliceHistorical ? selectedCacheDays.map(d => sliceHistorical(d)) : selectedCacheDays
+  // A cached day is derived once and then frozen behind the watermark, so a
+  // derivation that missed sources stays the answer forever — the Overview
+  // headline reading below the live panels beneath it (#1217). This run already
+  // parsed these dates. Reconcile the two per (date, provider), keeping
+  // whichever explains MORE calls: a cached day whose transcripts have expired
+  // still wins (nothing live can outbid it), and an under-read cached row stops
+  // suppressing evidence that is sitting on disk. Only dates the cache already
+  // holds are reconciled — filling absent dates is a separate decision each
+  // caller makes for itself.
+  const cachedDates = new Set(historicalDays.map(d => d.date))
+  const liveForCachedDates = liveHistoricalDays.filter(d =>
+    cachedDates.has(d.date) && (!daysSelection || daysSelection.has(d.date)),
+  )
+  const reconciledDays = liveForCachedDates.length > 0
+    ? mergeDayEntries(liveForCachedDates, historicalDays, true, undefined, 'prefer-richer')
+    : historicalDays
   const todayInRange = todayAllDays.filter(d => d.date >= rangeStartStr && d.date <= rangeEndStr)
-  const unfiltered = [...historicalDays, ...todayInRange].sort((a, b) => a.date.localeCompare(b.date))
+  const unfiltered = [...reconciledDays, ...todayInRange].sort((a, b) => a.date.localeCompare(b.date))
   return daysSelection ? unfiltered.filter(d => daysSelection.has(d.date)) : unfiltered
 }
 
@@ -529,7 +549,14 @@ export function buildDurableOverviewFromNormalizedIndex(
   const historicalSlice = hasProjectFilter
     ? (day: DailyEntry): DailyEntry => sliceDayToProject(day, matchesFilter)
     : undefined
-  const cachedAllDays = unionDaysForPeriod(cache, todayDays, periodInfo, null, historicalSlice)
+  const cachedAllDays = unionDaysForPeriod(
+    cache,
+    todayDays,
+    periodInfo,
+    null,
+    historicalSlice,
+    normalizedDays.filter(day => day.date !== todayStr),
+  )
   const cachedDates = new Set(cache.days.map(day => day.date))
   const rangeStartStr = toDateString(periodInfo.range.start)
   const rangeEndStr = toDateString(periodInfo.range.end)
@@ -719,7 +746,11 @@ export async function buildDurablePeriod(periodInfo: PeriodInfo, opts: Aggregate
       }
     : undefined
 
-  const allDays = unionDaysForPeriod(cache, todayAllDays, periodInfo, daysSelection?.days ?? null, sliceHistorical)
+  // The period parse above already read these dates; today is excluded because
+  // the union takes it from `todayAllDays`, which re-anchors a turn straddling
+  // midnight (see the todayAllDays note above) and must stay the today source.
+  const liveHistoricalDays = aggregateProjectsIntoDays(liveProjects).filter(d => d.date < todayStr)
+  const allDays = unionDaysForPeriod(cache, todayAllDays, periodInfo, daysSelection?.days ?? null, sliceHistorical, liveHistoricalDays)
   const freshDaysInSelection = freshProviderDays.filter(day =>
     day.date >= rangeStartStr
       && day.date <= rangeEndStr
