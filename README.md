@@ -62,7 +62,7 @@
   <tr>
     <td align="center" colspan="2">
       <strong>Capacity Dock</strong> <em>&middot; macOS menubar and Windows tray</em><br/>
-      <img src="https://raw.githubusercontent.com/getagentseal/codeburn/main/assets/capacity-dock.jpg?v=0.9.24" alt="CodeBurn Capacity Dock showing live provider usage rings on the screen edge" width="66%" /><br/>
+      <img src="https://raw.githubusercontent.com/getagentseal/codeburn/main/assets/capacity-dock.jpg?v=0.9.24-2" alt="CodeBurn Capacity Dock showing live provider usage rings on the screen edge" width="66%" /><br/>
       <code>codeburn menubar</code>
     </td>
   </tr>
