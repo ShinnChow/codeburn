@@ -61,7 +61,7 @@
   </tr>
   <tr>
     <td align="center" colspan="2">
-      <strong>Capacity Dock</strong> <em>&middot; native macOS menubar</em><br/>
+      <strong>Capacity Dock</strong> <em>&middot; macOS menubar and Windows tray</em><br/>
       <img src="https://raw.githubusercontent.com/getagentseal/codeburn/main/assets/capacity-dock.jpg" alt="CodeBurn Capacity Dock showing live provider usage rings on the screen edge" width="66%" /><br/>
       <code>codeburn menubar</code>
     </td>
@@ -361,6 +361,8 @@ codeburn menubar
 It downloads the `.msi` for your CLI version, verifies its sha256, runs it through `msiexec /passive`, and launches the tray app. Re-run with `--force` to reinstall; an already-installed matching version is just launched. You can also download the `.msi` yourself from the [latest Windows Menubar release](https://github.com/getagentseal/codeburn/releases/tag/windows-v0.9.24).
 
 Today's spend sits in the tray as a number beside the flame icon (turn it off in Settings, and the tooltip always carries it). Click for the same popover the macOS app shows: agent tabs, period switcher, Trend, Forecast, Pulse, Stats and Plan insights, activity and model breakdowns, optimize findings, and CSV/JSON export. Settings covers launch at login, the tray number, theme, and currency. It refreshes every 60 seconds while the popover is open and every 2 minutes while it is closed.
+
+Turn on **Show Capacity Dock** in the tray menu for the same edge-docked quota rail the macOS menubar has: one ring per connected provider, hover for every quota window with its reset time, drag it to any screen edge. It is off by default and needs codeburn 0.9.24 or newer for `codeburn quota`.
 
 The tray app reads everything through the CLI, so install that first (`npm install -g codeburn`). It needs **codeburn 0.9.9 or newer**, and shows a setup screen with the install command until it finds one. Source and build instructions are in [`windows/`](windows/) ([windows/DEVELOPMENT.md](windows/DEVELOPMENT.md)).
 
@@ -907,4 +909,4 @@ Built by [AgentSeal](https://agentseal.org).
 
 ## Acknowledgements
 
-The macOS Capacity Dock's provider-usage tracking was informed by [CodexBar](https://github.com/steipete/CodexBar) by Peter Steinberger ([@steipete](https://github.com/steipete)) — an MIT-licensed menubar app for AI provider usage. Thanks.
+The Capacity Dock's provider-usage tracking was informed by [CodexBar](https://github.com/steipete/CodexBar) by Peter Steinberger ([@steipete](https://github.com/steipete)) — an MIT-licensed menubar app for AI provider usage. Thanks.
