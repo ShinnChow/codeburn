@@ -1419,9 +1419,7 @@ private struct TopProjectsList: View {
                 .foregroundStyle(.primary)
                 .lineLimit(1)
             Spacer()
-            Text(SessionCountLabel.isExact(project.sessionCountBasis)
-                ? "\(project.sessions) sess"
-                : SessionCountLabel.text(sessions: project.sessions, basis: project.sessionCountBasis))
+            Text(SessionCountLabel.compact(sessions: project.sessions, basis: project.sessionCountBasis))
                 .font(.system(size: 9.5))
                 .foregroundStyle(.quaternary)
             Text(project.cost.asCompactCurrency())

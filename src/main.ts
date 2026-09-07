@@ -67,6 +67,7 @@ const { version } = require('../package.json')
 const STATUS_SNAPSHOT_RENDER_VERSION = 6
 const STATUS_SNAPSHOT_SEMANTIC_KEY = `${version}:render-${STATUS_SNAPSHOT_RENDER_VERSION}:daily-${DAILY_CACHE_VERSION}`
 import { loadCurrency, getCurrency, isValidCurrencyCode } from './currency.js'
+import { sessionCountIsExact } from './session-count-label.js'
 import { CodexThroughputReader, newestCodexSession, renderCodexThroughput } from './codex-throughput.js'
 
 // A downstream reader that closes the pipe early (`| head`, quitting `less`, or
@@ -571,16 +572,18 @@ function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: 
         }
       })
 
+  const sessionCountBasis = durable.data.sessionCountBasis
   const projectList = projects.map(p => ({
     name: p.project,
     path: p.projectPath,
     cost: convertCost(p.totalCostUSD),
     savings: convertCost(p.totalSavingsUSD),
-    avgCostPerSession: p.sessions.length > 0
-      ? convertCost(p.totalCostUSD / p.sessions.length)
-      : null,
+    ...(sessionCountIsExact(sessionCountBasis) && p.sessions.length > 0
+      ? { avgCostPerSession: convertCost(p.totalCostUSD / p.sessions.length) }
+      : {}),
     calls: p.totalApiCalls,
     sessions: p.sessions.length,
+    ...(sessionCountBasis ? { sessionCountBasis } : {}),
   }))
 
   const modelMap: Record<string, { calls: number; cost: number; savings: number; estimatedCost: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; baselineModel: string }> = {}
@@ -743,6 +746,7 @@ function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: 
       estimatedCost: convertCost(totalEstimatedUSD),
       calls: totalCalls,
       sessions: totalSessions,
+      ...(sessionCountBasis ? { sessionCountBasis } : {}),
       cacheHitPercent,
       tokens: {
         input: totalInput,

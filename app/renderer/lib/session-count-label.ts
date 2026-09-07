@@ -22,10 +22,6 @@ export function formatSessionCount(
   return `${sessions.toLocaleString('en-US')} sessions`
 }
 
-export function formatSessionAveragePlaceholder(): string {
-  return '—'
-}
-
 export function formatCombinedSessionCount(): string {
   return COMBINED_SESSION_COUNT_LABEL
 }

@@ -90,6 +90,18 @@ describe('codeburn status counts a session that spans days', () => {
       const row = json.current.topProjects.find(project => project.id === cwd)
       expect(row.sessionDetails).toHaveLength(1)
       expect(row.sessions).toBe(1)
+
+      const report = runCli(['report', '--format', 'json', '--period', 'week', '--provider', 'claude'], home)
+      expect(report.status, report.stderr).toBe(0)
+      const exported = JSON.parse(report.stdout) as {
+        overview: { sessionCountBasis?: string }
+        projects: Array<{ path?: string; sessions: number; sessionCountBasis?: string; avgCostPerSession?: number }>
+      }
+      const exportedRow = exported.projects.find(project => project.path === cwd)!
+      expect(exported.overview.sessionCountBasis).toBe('partial')
+      expect(exportedRow.sessions).toBe(1)
+      expect(exportedRow.sessionCountBasis).toBe('partial')
+      expect(exportedRow.avgCostPerSession).toBeUndefined()
     } finally {
       await rm(home, { recursive: true, force: true })
     }

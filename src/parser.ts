@@ -83,7 +83,7 @@ function isWindowsAbsPath(slashNormalized: string): boolean {
   return /^[a-zA-Z]:(\/|$)/.test(slashNormalized) || slashNormalized.startsWith('//')
 }
 
-function foldIdentifiedWindowsPath(slashNormalized: string): string {
+export function foldIdentifiedWindowsPath(slashNormalized: string): string {
   return isWindowsAbsPath(slashNormalized) ? slashNormalized.toLowerCase() : slashNormalized
 }
 
@@ -4234,7 +4234,7 @@ export async function parseProviderSources(
     }
   }
 
-  // #1260 REVISE3: group by absolute projectPath / workingDirectory when
+  // #1260: group by absolute projectPath / workingDirectory when
   // available — never by display basename alone. Two Pi roots with cwd=/a/vault
   // and /b/vault both display as "vault"; keying on the leaf collapsed them
   // (first projectPath wins) before mergeProjectsByCrossProviderKey could see
@@ -4744,7 +4744,6 @@ export function mergeProjectsByCrossProviderKey(projects: ProjectSummary[]): Map
   for (const [k, v] of labelOnly) mergedMap.set(k, v)
   return mergedMap
 }
-
 
 function summaryProvider(session: SessionSummary): string {
   return session.turns.flatMap(t => t.assistantCalls)[0]?.provider ?? 'unknown'

@@ -1,5 +1,5 @@
 /**
- * #1260 REVISE3-residuals — Codex remaining gates after two-root PARTIAL ACCEPT:
+ * #1260 project-identity residuals beyond the two-root case:
  * 1) five-provider (claude, codex, hermes, kimicode, pi) discovery→parse→cache
  *    cold/warm abs-cwd pipeline
  * 2) missing / ambiguous cwd exact contracts (no vacuous >=1)

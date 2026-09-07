@@ -1,4 +1,4 @@
-import { parseAllSessions } from './parser.js'
+import { foldIdentifiedWindowsPath, parseAllSessions } from './parser.js'
 import { toDateString } from './daily-cache.js'
 import type { DateRange } from './types.js'
 
@@ -27,9 +27,9 @@ export function spendProjectIdentity(project: { project: string; projectPath?: s
   const raw = (project.projectPath ?? '').trim().replace(/\\/g, '/')
   const looksAbs = raw.startsWith('/') || /^[a-zA-Z]:\//.test(raw) || (raw.includes('/') && !raw.startsWith('-'))
   if (looksAbs && raw) {
-    const id = raw.replace(/\/+$/, '')
-    const base = id.split('/').filter(Boolean).pop() || project.project
-    return { id, label: base }
+    const trimmed = raw.replace(/\/+$/, '')
+    const base = trimmed.split('/').filter(Boolean).pop() || project.project
+    return { id: foldIdentifiedWindowsPath(trimmed), label: base }
   }
   return { id: project.project, label: project.project }
 }

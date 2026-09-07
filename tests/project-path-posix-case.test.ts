@@ -13,6 +13,7 @@ import {
 import { CACHE_VERSION } from '../src/session-cache.js'
 import { buildPayloadProjects } from '../src/usage-aggregator.js'
 import type { ProjectSummary } from '../src/types.js'
+import type { DailyEntry } from '../src/daily-cache.js'
 
 describe('exported path-identity helpers', () => {
   it('preserves POSIX case and casefolds identified Windows drive/UNC paths', () => {
@@ -66,6 +67,9 @@ describe('cold+warm Pi cwd case identity', () => {
       expect(paths(cold)).toEqual(['/a/Vault', '/a/vault'])
       expect(paths(warm)).toEqual(['/a/Vault', '/a/vault'])
 
+      const reloaded = JSON.parse(JSON.stringify(cache))
+      expect(paths(await parseProviderSources('pi', sources, new Set(), reloaded))).toEqual(['/a/Vault', '/a/vault'])
+
       const merged = mergeProjectsByCrossProviderKey(warm)
       expect([...merged.values()].map(p => p.projectPath.replace(/\\/g, '/')).sort()).toEqual(['/a/Vault', '/a/vault'])
 
@@ -76,5 +80,40 @@ describe('cold+warm Pi cwd case identity', () => {
     } finally {
       await rm(root, { recursive: true, force: true })
     }
+  })
+})
+
+describe('Windows drive case in payload identity', () => {
+  it('folds a C:\\Work\\Vault cache row into the live c:/work/vault row', () => {
+    const live = [{
+      project: 'Vault',
+      projectPath: 'c:/work/vault',
+      sessions: [],
+      totalCostUSD: 1,
+      totalSavingsUSD: 0,
+      totalApiCalls: 1,
+      totalProxiedCostUSD: 0,
+    }] as unknown as ProjectSummary[]
+    const day = {
+      date: '2026-09-02',
+      cost: 2,
+      calls: 1,
+      sessions: 1,
+      savingsUSD: 0,
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      editTurns: 0,
+      oneShotTurns: 0,
+      models: {},
+      categories: {},
+      projects: { Vault: { path: 'C:\\Work\\Vault', cost: 2, calls: 1, savingsUSD: 0, sessions: 1 } },
+      providers: {},
+    } as unknown as DailyEntry
+
+    const rows = buildPayloadProjects(live, [day], '/Users/synthetic')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.cost).toBe(2)
   })
 })

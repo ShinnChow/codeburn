@@ -22,6 +22,17 @@ export function formatSessionCount(
   return `${sessions.toLocaleString('en-US')} sessions`
 }
 
+export function formatCompactSessionCount(
+  sessions: number,
+  basis: SessionCountBasis | undefined,
+): string {
+  if (!sessionCountIsExact(basis)) {
+    if (sessions <= 0) return 'Unavailable'
+    return `≥${sessions.toLocaleString('en-US')} sess`
+  }
+  return `${sessions.toLocaleString('en-US')} sess`
+}
+
 export function formatSessionAveragePlaceholder(): string {
   return '—'
 }

@@ -1,5 +1,5 @@
 /**
- * Codex REVISE3 (#1260): two Pi sessions with cwd=/a/vault and /b/vault both
+ * #1260: two Pi sessions with cwd=/a/vault and /b/vault both
  * display as basename "vault". parseProviderSources must keep them distinct
  * through cold/warm cache and either discovery order, then merge must report
  * both abs projectPaths.
@@ -42,7 +42,7 @@ function reorder(sources: SessionSource[], firstParent: 'a' | 'b'): SessionSourc
   })
 }
 
-describe('two Pi roots same display basename (#1260 REVISE3)', () => {
+describe('two Pi roots same display basename (#1260)', () => {
   it('preserves both explicit cwd roots when two Pi sessions share the basename vault', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-two-pi-'))
     try {

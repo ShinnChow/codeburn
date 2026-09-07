@@ -6,7 +6,7 @@ import { daysInMonth, monthDay } from '../lib/dates'
 import { computeHistoryStats } from '../lib/history'
 import type { Period } from './PeriodTabs'
 import { ArrowDownRight, ArrowUpRight, ChevronRight, FlameIcon } from './Icons'
-import { formatSessionCount, SESSION_COUNT_HELP } from '../lib/session-count-label'
+import { formatCompactSessionCount, formatSessionCount, SESSION_COUNT_HELP } from '../lib/session-count-label'
 
 type Props = {
   payload: MenubarPayload
@@ -97,7 +97,7 @@ function TopProjects({ projects, currency }: { projects: ProjectEntry[]; currenc
               <ChevronRight size={7} className={`chevron ${isOpen ? 'chevron-open' : ''}`} />
               <span className="project-name">{projectDisplayName(project.name)}</span>
               <span className="stats-spacer" />
-              <span className="project-sessions" title={project.sessionCountBasis === 'identity' ? undefined : SESSION_COUNT_HELP}>{formatSessionCount(project.sessions, project.sessionCountBasis)}</span>
+              <span className="project-sessions" title={project.sessionCountBasis === 'identity' ? undefined : SESSION_COUNT_HELP}>{formatCompactSessionCount(project.sessions, project.sessionCountBasis)}</span>
               <span className="project-cost">{formatCompactCurrency(project.cost, currency)}</span>
               <span className="project-bar" style={{ width: `${Math.max(2, 40 * (project.cost / maxCost))}px` }} />
             </button>

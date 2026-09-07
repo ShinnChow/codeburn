@@ -218,7 +218,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
       let pendingUserTimestamp = ''
       // Absolute session cwd from the header (or discovery sourcePath). Must
       // survive into projectPath/workingDirectory so cross-provider merge can
-      // key by real path instead of basename-only (#1260 Codex REVISE2).
+      // key by real path instead of basename-only (#1260).
       let sessionCwd = typeof source.sourcePath === 'string' && looksAbsolutePath(source.sourcePath)
         ? source.sourcePath.trim()
         : ''

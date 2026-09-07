@@ -21,9 +21,9 @@ enum SessionCountLabel {
     static func compact(sessions: Int, basis: String?) -> String {
         if !isExact(basis) {
             if sessions <= 0 { return "Unavailable" }
-            return "At least \(sessions)"
+            return "≥\(sessions) sess"
         }
-        return "\(sessions)"
+        return "\(sessions) sess"
     }
 
     static func averageText(_ value: Double?, basis: String?, format: (Double) -> String) -> String {

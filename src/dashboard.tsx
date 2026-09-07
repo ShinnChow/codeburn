@@ -363,7 +363,7 @@ export type DurableOverview = {
   calls: number
   sessions: number
   sessionCountBasis?: 'identity' | 'partial'
-  inputTokens: number,
+  inputTokens: number
   outputTokens: number
   cacheReadTokens: number
   cacheWriteTokens: number

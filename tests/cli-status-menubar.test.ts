@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { CACHE_SCHEMA_VERSION } from '../src/models.js'
 
 // Each distinct query gets its own `status-snapshot.<queryKeyHash>.json` file
-// (review finding B-G1) rather than one shared fixed path — these tests
+// rather than one shared fixed path — these tests
 // don't know the hash up front, so they locate whatever landed by pattern.
 const SNAPSHOT_FILE_RE = /^status-snapshot\.[0-9a-f]+\.json$/
 function findSnapshotFiles(cacheDir: string): string[] {

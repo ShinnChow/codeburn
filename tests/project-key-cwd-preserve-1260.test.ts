@@ -1,5 +1,5 @@
 /**
- * #1260 REVISE2 — preserve real cwd through the five issue providers
+ * #1260 — preserve real cwd through the five issue providers
  * (claude, codex, hermes, kimicode, pi) and refuse basename-only false merges
  * when absolute parents differ. Also covers missing/ambiguous cwd, same-parent
  * fold, cold/warm cache, and supported path shapes.
@@ -43,7 +43,7 @@ function norm(p: string | undefined): string {
   return (p ?? '').replace(/\\/g, '/').replace(/\/+$/, '')
 }
 
-describe('merge: same parent vs different parents (#1260 REVISE2)', () => {
+describe('merge: same parent vs different parents (#1260)', () => {
   it('folds five-provider same-parent labels into one abs key', () => {
     const merged = mergeProjectsByCrossProviderKey([
       summary('-root-vault', '/root/vault', { cost: 10 }), // claude

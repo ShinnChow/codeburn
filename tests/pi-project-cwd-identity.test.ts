@@ -1,5 +1,5 @@
 /**
- * Codex REVISE2 independent fixture (#1260): real Pi JSONL header cwd=/b/vault
+ * #1260: a real Pi JSONL header cwd=/b/vault
  * must survive discovery → parseProviderSources → mergeProjectsByCrossProviderKey
  * and must NOT fold into an unrelated /a/vault via basename-only identity.
  */
@@ -13,7 +13,7 @@ import { CACHE_VERSION } from '../src/session-cache.js'
 import type { ProjectSummary } from '../src/types.js'
 
 it('does not attribute a Pi session from /b/vault to the unrelated /a/vault', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'codex-review-pi-'))
+  const root = await mkdtemp(join(tmpdir(), 'pi-cwd-identity-'))
   try {
     const dir = join(root, 'sessions', '--b-vault--')
     await mkdir(dir, { recursive: true })

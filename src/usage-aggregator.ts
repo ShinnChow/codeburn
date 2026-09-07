@@ -1007,6 +1007,7 @@ export function buildPayloadProjects(
     fallbackName: string
     contribs: Map<string, Contrib>
     sessions: SessionSummary[]
+    seen: Set<SessionSummary>
   }
   const byKey = new Map<string, Acc>()
   const take = (project: string, projectPath: string | undefined, fallbackName: string): Acc => {
@@ -1020,6 +1021,7 @@ export function buildPayloadProjects(
         fallbackName,
         contribs: new Map(),
         sessions: [],
+        seen: new Set(),
       }
       byKey.set(key, acc)
     } else if (projectPath && !acc.path) {
@@ -1048,7 +1050,9 @@ export function buildPayloadProjects(
     return c
   }
   const addSessionOnce = (acc: Acc, s: SessionSummary): void => {
-    if (!acc.sessions.includes(s)) acc.sessions.push(s)
+    if (acc.seen.has(s)) return
+    acc.seen.add(s)
+    acc.sessions.push(s)
   }
   const placeCache = (
     slug: string,

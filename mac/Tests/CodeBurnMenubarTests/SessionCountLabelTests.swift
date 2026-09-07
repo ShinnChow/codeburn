@@ -16,6 +16,14 @@ struct SessionCountLabelTests {
         #expect(SessionCountLabel.text(sessions: 0, basis: "identity") == "0 sessions")
     }
 
+    @Test("compact row phrasing marks a bound without spelling it out")
+    func compactPhrasing() {
+        #expect(SessionCountLabel.compact(sessions: 12, basis: "identity") == "12 sess")
+        #expect(SessionCountLabel.compact(sessions: 12, basis: "partial") == "≥12 sess")
+        #expect(SessionCountLabel.compact(sessions: 12, basis: nil) == "≥12 sess")
+        #expect(SessionCountLabel.compact(sessions: 0, basis: "partial") == "Unavailable")
+    }
+
     @Test("combined-scope copy never presents a device sum as a count")
     func combinedScopeUnavailable() {
         #expect(SessionCountLabel.combinedText == "Session count unavailable")

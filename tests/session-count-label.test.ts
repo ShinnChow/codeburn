@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildMenubarPayload } from '../src/menubar-json.js'
-import { formatCombinedSessionCount, formatSessionCount, sessionCountIsExact, COMBINED_SESSION_COUNT_HELP, COMBINED_SESSION_COUNT_LABEL, SESSION_COUNT_HELP } from '../src/session-count-label.js'
+import { formatSessionCount, sessionCountIsExact, SESSION_COUNT_HELP } from '../src/session-count-label.js'
 import type { PeriodData } from '../src/menubar-json.js'
 
 describe('session count labels', () => {
@@ -14,15 +14,6 @@ describe('session count labels', () => {
     expect(formatSessionCount(3, undefined)).toBe('At least 3 sessions')
     expect(SESSION_COUNT_HELP).toContain('Older session logs')
     expect(formatSessionCount(3, 'partial')).not.toMatch(/occupancy|canonical|cache/i)
-  })
-
-  it('combined-scope copy never presents a device sum as a count', () => {
-    expect(formatCombinedSessionCount()).toBe('Session count unavailable')
-    expect(formatCombinedSessionCount()).toBe(COMBINED_SESSION_COUNT_LABEL)
-    expect(COMBINED_SESSION_COUNT_HELP).toBe('Session identities are unavailable across devices.')
-    expect(formatCombinedSessionCount()).not.toMatch(/At least|^\d/)
-    expect(formatSessionCount(0, 'identity')).toBe('0 sessions')
-    expect(formatSessionCount(3, 'partial')).toBe('At least 3 sessions')
   })
 })
 

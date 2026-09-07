@@ -8,6 +8,7 @@ import { findUnpricedModels, getShortModelName, unpricedModelHint } from './mode
 import { callBillableOutputTokens, sessionBillableOutputTokens, sessionModelBillableOutputTokens } from './session-output.js'
 import { markEstimated } from './format.js'
 import { formatSessionCount, SESSION_COUNT_HELP, type SessionCountBasis } from './session-count-label.js'
+import { normalizeAbsProjectPathKey } from './parser.js'
 import { dateKey } from './day-aggregator.js'
 import type { DailyEntry } from './daily-cache.js'
 import type { BudgetStatus, BudgetTier } from './budget.js'
@@ -46,14 +47,9 @@ function projectName(p: ProjectSummary): string {
   return p.project.split('-').filter(Boolean).pop() || p.project
 }
 
-
 /** #1260: aggregate by abs path identity so /a/vault != /b/vault. */
 function projectAggKey(p: ProjectSummary): string {
-  const path = (p.projectPath ?? '').trim().replace(/\\/g, '/')
-  if (path && isAbsoluteProjectPath(path)) return path.replace(/\/+$/, '').toLowerCase()
-  // Codex-style stripped abs ("root/vault") still has a slash and no leading dash.
-  if (path.includes('/') && !path.startsWith('-')) return path.replace(/\/+$/, '').toLowerCase()
-  return `label:${projectName(p).toLowerCase()}`
+  return normalizeAbsProjectPathKey(p.projectPath ?? '') ?? `label:${projectName(p).toLowerCase()}`
 }
 
 function disambiguatedProjectLabel(key: string, sample: ProjectSummary, basenameCounts: Map<string, number>): string {

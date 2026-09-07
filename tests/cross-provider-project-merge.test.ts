@@ -128,7 +128,7 @@ describe('mergeProjectsByCrossProviderKey (#1260)', () => {
     expect(labelRows[0]![1].totalCostUSD).toBe(99)
   })
 
-  it('Codex repro: sanitized collision retains full member set (label-only $5)', () => {
+  it('sanitized collision retains full member set (label-only $5)', () => {
     // /root/vault + /root-vault both sanitize to root-vault. Label-only
     // project:'root-vault' must NOT fold into path:root-vault via basename
     // after ignoring the sanitized collision.
@@ -153,7 +153,7 @@ describe('mergeProjectsByCrossProviderKey (#1260)', () => {
     [1, 2, 0],
     [2, 0, 1],
     [2, 1, 0],
-  ] as const)('Codex repro order permutation %i,%i,%i keeps third label-only', (a, b, c) => {
+  ] as const)('order permutation %i,%i,%i keeps third label-only', (a, b, c) => {
     const rows = [
       summary('vault', '/root/vault', { cost: 10 }),
       summary('root-vault', '/root-vault', { cost: 20 }),
@@ -169,7 +169,7 @@ describe('mergeProjectsByCrossProviderKey (#1260)', () => {
     expect(labelRows[0]![1].totalCostUSD).toBe(5)
   })
 
-  it('Codex repro leading-dash alias also stays label-only on collision', () => {
+  it('leading-dash alias also stays label-only on collision', () => {
     const merged = mergeProjectsByCrossProviderKey([
       summary('vault', '/root/vault', { cost: 10 }),
       summary('root-vault', '/root-vault', { cost: 20 }),
@@ -335,9 +335,17 @@ describe('mergeProjectsByCrossProviderKey (#1260)', () => {
     expect([...bFirst.values()][0]!.totalCostUSD).toBe(3)
   })
 
+  it('keeps a lowercase slug unattached when it matches two case-distinct roots', () => {
+    const merged = mergeProjectsByCrossProviderKey([
+      summary('Vault', '/a/Vault', { cost: 2 }),
+      summary('vault', '/a/vault', { cost: 3 }),
+      summary('a-vault', '', { cost: 7 }),
+    ])
+    expect(merged.size).toBe(3)
+    expect([...merged.values()].map(p => p.totalCostUSD).sort((a, b) => a - b)).toEqual([2, 3, 7])
+  })
+
   it('sums totalSavingsUSD when the same abs root is grouped', () => {
-    // Root log root-project-case-savings-51765867.log recorded 30 because
-    // foldInto dropped the second savings. Product expectation is 32.
     const merged = mergeProjectsByCrossProviderKey([
       summary('shared', '/repos/shared', { cost: 10, savings: 30 }),
       summary('shared', '/repos/shared', { cost: 5, savings: 2 }),

@@ -304,4 +304,31 @@ describe('renderOverview #1260 residuals', () => {
     const top = out.split('Top projects')[1]?.split('Daily')[0] ?? ''
     expect(top).not.toMatch(/│\s+vault\s+│\s+\$11\.00/)
   })
+
+  it('keeps POSIX case-distinct paths as separate Top projects rows', () => {
+    const out = renderOverview([
+      makeProject({
+        project: 'Vault',
+        projectPath: '/a/Vault',
+        cost: 10,
+        calls: 1,
+        model: 'claude-sonnet-4-5',
+        provider: 'claude',
+        tokens: { input: 10, output: 5, cacheR: 0, cacheW: 0 },
+      }),
+      makeProject({
+        project: 'vault',
+        projectPath: '/a/vault',
+        cost: 1,
+        calls: 1,
+        model: 'gpt-5.4',
+        provider: 'pi',
+        tokens: { input: 10, output: 5, cacheR: 0, cacheW: 0 },
+      }),
+    ], { label: 'residuals', color: false })
+    const top = out.split('Top projects')[1]?.split('Daily')[0] ?? ''
+    expect(top).toContain('$10.00')
+    expect(top).toContain('$1.00')
+    expect(top).not.toContain('$11.00')
+  })
 })
