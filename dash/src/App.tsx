@@ -12,7 +12,7 @@ import {
   type Payload,
   type Period,
 } from '@/lib/api'
-import { cn, fmtNum, fmtTokens, usd } from '@/lib/utils'
+import { cn, fmtNum, fmtTokens, formatSessionCount, usd } from '@/lib/utils'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { MetricCard } from '@/components/MetricCard'
@@ -118,7 +118,7 @@ function DeviceView({ payload, isRemote, unit }: { payload?: Payload; isRemote: 
         <div className="flex items-end justify-between px-5 pt-4">
           <div>
             <div className="text-xs text-tertiary-foreground">
-              {c ? `${fmtNum(c.calls)} calls · ${fmtNum(c.sessions)} sessions` : ' '}
+              {c ? `${fmtNum(c.calls)} calls · ${formatSessionCount(c.sessions, c.sessionCountBasis)}` : ' '}
             </div>
             <div className="mt-1 font-display text-4xl tracking-tight tabular-nums text-primary">
               {c ? (unit === 'tokens' ? fmtTokens(c.inputTokens + c.outputTokens) : usd(c.cost)) : <Skeleton className="h-10 w-36" />}
@@ -142,7 +142,7 @@ function DeviceView({ payload, isRemote, unit }: { payload?: Payload; isRemote: 
               sub={`in ${fmtTokens(c.inputTokens)} / out ${fmtTokens(c.outputTokens)}`}
             />
             <MetricCard label="Calls" value={fmtNum(c.calls)} />
-            <MetricCard label="Sessions" value={fmtNum(c.sessions)} />
+            <MetricCard label="Sessions" value={formatSessionCount(c.sessions, c.sessionCountBasis)} />
             <MetricCard label="Cache hit" value={`${(c.cacheHitPercent || 0).toFixed(1)}%`} />
             <MetricCard label="Cache write" value={fmtTokens(cacheWrite)} />
             <MetricCard label="Cache read" value={fmtTokens(cacheRead)} />
@@ -221,8 +221,8 @@ function DeviceView({ payload, isRemote, unit }: { payload?: Payload; isRemote: 
               rows={(c?.topProjects ?? []).slice(0, 10).map((p) => ({
                 name: p.name,
                 cost: usd(p.cost),
-                sessions: fmtNum(p.sessions),
-                avgCost: usd(p.avgCostPerSession),
+                sessions: formatSessionCount(p.sessions, p.sessionCountBasis),
+                avgCost: p.sessionCountBasis === 'identity' && p.avgCostPerSession != null ? usd(p.avgCostPerSession) : '—',
               }))}
             />
           )}

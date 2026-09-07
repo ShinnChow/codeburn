@@ -152,6 +152,7 @@ export type MenubarPayload = {
     cost: number
     calls: number
     sessions: number
+    sessionCountBasis?: 'identity' | 'partial'
     oneShotRate: number | null
     inputTokens: number
     outputTokens: number
@@ -179,13 +180,15 @@ export type MenubarPayload = {
     // Optional: older CLIs omit it. `id` is the internal provider name (round-trips
     // as --provider), `label` the display name. `hasUsage` distinguishes active $0
     // providers from detected-but-idle providers when present.
-    providerDetails?: Array<{ id: string; label: string; cost: number; calls?: number; hasUsage?: boolean }>
+    providerDetails?: Array<{ id: string; label: string; cost: number; calls?: number; hasUsage?: boolean; sessions?: number; sessionCountBasis?: 'identity' | 'partial' }>
     topProjects: Array<{
+      id?: string
       name: string
       cost: number
       savingsUSD: number
       sessions: number
-      avgCostPerSession: number
+      avgCostPerSession?: number
+      sessionCountBasis?: 'identity' | 'partial'
       sessionDetails: Array<{
         cost: number
         savingsUSD: number

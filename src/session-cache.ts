@@ -389,7 +389,13 @@ export const PROVIDER_PARSE_VERSIONS: Record<string, string> = {
   // nested-agent-v1: OMP writes crewmate transcripts one directory below each
   // parent session. reported-cost-v2 persists those measured costs through the
   // cache, including the explicit zero on xai-oauth turns.
-  omp: 'nested-agent-v1-reported-cost-v2',
+  // cwd-project-path-v1 (#1260): retain absolute session header cwd on
+  // projectPath/workingDirectory instead of basename-only identity.
+  // project-group-by-abs-v1 (#1260 REVISE3): parseProviderSources groups by
+  // abs projectPath/workingDirectory so same-basename distinct roots stay apart.
+  pi: 'cwd-project-path-v1-project-group-by-abs-v1',
+  // project-group-by-abs-v1: shared Pi/OMP serve grouping uses abs identity.
+  omp: 'nested-agent-v1-reported-cost-v2-cwd-project-path-v1-project-group-by-abs-v1',
   opencode: 'session-model-v1',
   quickdesk: 'emf-sqlite-v2-est-cost',
   // session-lineage-capture-v1: SessionLineage (CB-1, slice 1) is now carried

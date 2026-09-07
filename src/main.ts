@@ -999,6 +999,7 @@ program
         savingsUSD: durable.data.savingsUSD,
         calls: durable.data.calls,
         sessions: durable.data.sessions,
+        sessionCountBasis: durable.data.sessionCountBasis,
         inputTokens: durable.data.inputTokens,
         outputTokens: durable.data.outputTokens,
         cacheReadTokens: durable.data.cacheReadTokens,

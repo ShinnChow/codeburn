@@ -5,6 +5,7 @@ import React, { Fragment, useState, useCallback, useEffect, useLayoutEffect, use
 import { render, Box, Text, measureElement, useInput, useApp, useWindowSize, type DOMElement, type Instance, type RenderOptions } from 'ink'
 import { CATEGORY_LABELS, type DateRange, type ProjectSummary, type TaskCategory } from './types.js'
 import { formatCost, formatTokens, markEstimated, carriedCostNote } from './format.js'
+import { formatSessionCount } from './session-count-label.js'
 import { aggregateModelEfficiency } from './model-efficiency.js'
 import { parseAllSessions, filterProjectsByDateRange, filterProjectsByName, setInteractiveScanUI, withSinglePassParse, withColdFirstPaintFloor, filesParsedFromSourceCount, isCompleteSessionSnapshotAvailable } from './parser.js'
 import { findUnpricedModels, isExpectedFreeModel, loadPricing } from './models.js'
@@ -361,7 +362,8 @@ export type DurableOverview = {
   savingsUSD: number
   calls: number
   sessions: number
-  inputTokens: number
+  sessionCountBasis?: 'identity' | 'partial'
+  inputTokens: number,
   outputTokens: number
   cacheReadTokens: number
   cacheWriteTokens: number
@@ -394,6 +396,7 @@ async function computeDurableOverview(
     savingsUSD: data.savingsUSD,
     calls: data.calls,
     sessions: data.sessions,
+    sessionCountBasis: data.sessionCountBasis,
     inputTokens: data.inputTokens,
     outputTokens: data.outputTokens,
     cacheReadTokens: data.cacheReadTokens,
@@ -617,8 +620,8 @@ function Overview({ projects, label, width, planUsages, durable }: { projects: P
         <Text dimColor> cost   </Text>
         <Text bold>{totalCalls.toLocaleString()}</Text>
         <Text dimColor> calls   </Text>
-        <Text bold>{String(totalSessions)}</Text>
-        <Text dimColor> sessions   </Text>
+        <Text bold>{durable ? formatSessionCount(totalSessions, durable.sessionCountBasis) : `${totalSessions.toLocaleString()} sessions`}</Text>
+        <Text dimColor>   </Text>
         <Text bold>{cacheHit.toFixed(1)}%</Text>
         <Text dimColor> cache hit</Text>
       </Text>

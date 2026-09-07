@@ -16,6 +16,10 @@ export type PeriodData = {
   estimatedCostUSD?: number
   calls: number
   sessions: number
+  /// How `sessions` was derived. `identity` is exact unique source ids with no
+  /// unknown-cache contribution; `partial` is a lower bound. Omitted on older
+  /// PeriodData producers.
+  sessionCountBasis?: SessionCountBasis
   inputTokens: number
   outputTokens: number
   cacheReadTokens: number
@@ -29,7 +33,7 @@ export type PeriodData = {
   /// current tables (#638): their calls contribute $0 to `cost`. Optional so
   /// PeriodData producers that predate the field keep compiling.
   unpricedModels?: Array<{ model: string; calls: number; tokens: number }>
-  projects?: Array<{ name: string; cost: number; savingsUSD: number; sessions: number; sessionDetails?: Array<{ cost: number; savingsUSD: number; calls: number; inputTokens: number; outputTokens: number; date: string; models: Array<{ name: string; cost: number; savingsUSD: number }> }> }>
+  projects?: Array<{ id?: string; name: string; cost: number; savingsUSD: number; sessions: number; sessionCountBasis?: SessionCountBasis; sessionDetails?: Array<{ cost: number; savingsUSD: number; calls: number; inputTokens: number; outputTokens: number; date: string; models: Array<{ name: string; cost: number; savingsUSD: number }> }> }>
   modelEfficiency?: Array<{ name: string; costPerEdit: number | null; oneShotRate: number | null }>
   topSessions?: Array<{ project: string; cost: number; savingsUSD: number; calls: number; date: string }>
   /// Workflow-intelligence rollups (issue: workflow intelligence). Optional so
@@ -91,6 +95,7 @@ export type ProviderCost = {
   outputTokens?: number
   /** Provider-scoped session count for the period, absent under the same rule. */
   sessions?: number
+  sessionCountBasis?: SessionCountBasis
 }
 import type { OptimizeResult } from './optimize.js'
 import { getCurrency } from './currency.js'
@@ -100,6 +105,7 @@ import type { ReworkedFile } from './workflow-insights.js'
 import type { PrRow, BranchRow } from './sessions-report.js'
 import type { LiveSessionsBlock } from './live-sessions.js'
 import { buildTelemetrySnapshot, type TelemetrySnapshot, type TelemetrySnapshotInput } from './telemetry-snapshot.js'
+import { sessionCountIsExact, type SessionCountBasis } from './session-count-label.js'
 
 const TOP_ACTIVITIES_LIMIT = 20
 const TOP_MODELS_LIMIT = 20
@@ -235,6 +241,8 @@ export type MenubarPayload = {
     cost: number
     calls: number
     sessions: number
+    /// How `sessions` was derived. Omitted on older producers.
+    sessionCountBasis?: SessionCountBasis
     oneShotRate: number | null
     inputTokens: number
     outputTokens: number
@@ -296,13 +304,22 @@ export type MenubarPayload = {
       inputTokens?: number
       outputTokens?: number
       sessions?: number
+      sessionCountBasis?: SessionCountBasis
     }>
     topProjects: Array<{
+      /// Stable identity (abs cwd when known). Optional so older PeriodData
+      /// producers keep compiling; renderer expand keys on `id ?? name`.
+      id?: string
       name: string
       cost: number
       savingsUSD: number
       sessions: number
-      avgCostPerSession: number
+      /// Present only when `sessionCountBasis` is `identity` and sessions > 0.
+      /// Omitted for lower-bound counts so clients cannot treat cost/count as exact.
+      avgCostPerSession?: number
+      /// How `sessions` was derived. Omitted on older producers. `identity` is
+      /// an exact unique count from surviving source files; `partial` is a lower bound.
+      sessionCountBasis?: SessionCountBasis
       sessionDetails: Array<{
         cost: number
         savingsUSD: number
@@ -513,6 +530,7 @@ function buildProviderDetails(providers: ProviderCost[]): MenubarPayload['curren
       ...(p.inputTokens === undefined ? {} : { inputTokens: p.inputTokens }),
       ...(p.outputTokens === undefined ? {} : { outputTokens: p.outputTokens }),
       ...(p.sessions === undefined ? {} : { sessions: p.sessions }),
+      ...(p.sessionCountBasis ? { sessionCountBasis: p.sessionCountBasis } : {}),
     }))
 }
 
@@ -529,11 +547,15 @@ function buildTopProjects(projects: PeriodData['projects']): MenubarPayload['cur
     .sort((a, b) => (b.cost + b.savingsUSD) - (a.cost + a.savingsUSD))
     .slice(0, TOP_PROJECTS_LIMIT)
     .map(p => ({
+      ...(p.id ? { id: p.id } : {}),
       name: p.name,
       cost: p.cost,
       savingsUSD: p.savingsUSD,
       sessions: p.sessions,
-      avgCostPerSession: p.sessions > 0 ? p.cost / p.sessions : 0,
+      ...(sessionCountIsExact(p.sessionCountBasis) && p.sessions > 0
+        ? { avgCostPerSession: p.cost / p.sessions }
+        : {}),
+      ...(p.sessionCountBasis ? { sessionCountBasis: p.sessionCountBasis } : {}),
       sessionDetails: (p.sessionDetails ?? []).map(s => ({
         cost: s.cost,
         savingsUSD: s.savingsUSD,
@@ -614,6 +636,7 @@ export function buildMenubarPayload(
       cost: current.cost,
       calls: current.calls,
       sessions: current.sessions,
+      ...(current.sessionCountBasis ? { sessionCountBasis: current.sessionCountBasis } : {}),
       oneShotRate: aggregateOneShotRate(current.categories),
       inputTokens: current.inputTokens,
       outputTokens: current.outputTokens,
