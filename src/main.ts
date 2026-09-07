@@ -58,7 +58,13 @@ const { version } = require('../package.json')
 // v5: providerDetails carries per-provider tokens and sessions, which a v4
 // record predates — the dock glance would read a provider as having no token
 // breakdown purely because the snapshot was written before this build.
-const STATUS_SNAPSHOT_RENDER_VERSION = 5
+// v6: sessionCountBasis is now part of payload meaning. A same-package v5
+// snapshot written before that field existed still matches the v5 semantic
+// key; omitting it makes empty identity-0 read as undefined-0 ("unavailable")
+// and nonempty exact counts as a bound. Daily and session cache versions stay
+// put: retained unknown accounting must remain a partial bound, not be
+// discarded to regain exact labels.
+const STATUS_SNAPSHOT_RENDER_VERSION = 6
 const STATUS_SNAPSHOT_SEMANTIC_KEY = `${version}:render-${STATUS_SNAPSHOT_RENDER_VERSION}:daily-${DAILY_CACHE_VERSION}`
 import { loadCurrency, getCurrency, isValidCurrencyCode } from './currency.js'
 import { CodexThroughputReader, newestCodexSession, renderCodexThroughput } from './codex-throughput.js'
