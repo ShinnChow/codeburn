@@ -1,12 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { getAllProviders } from '../../src/providers/index.js'
 
-/**
- * #899 exact-main residual census (Codex REVIEW-2026-09-06-2306):
- * seven filesystem gaps + one intentional Vercel network exception.
- * Method presence is necessary but not sufficient for OpenClaw empty-root
- * semantics — see openclaw.test.ts doctor fixture.
- */
+// #899: every filesystem provider must report its roots to `doctor`;
+// Vercel Gateway is the one intentional network-only exception.
 const FILESYSTEM_GAP_NAMES = [
   'forge',
   'mux',
