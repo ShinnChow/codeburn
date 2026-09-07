@@ -19,23 +19,27 @@ export function userTimingEntryCount(): number {
   return performance.getEntriesByType('mark').length + performance.getEntriesByType('measure').length
 }
 
+/** Drops every user-timing mark and measure without looking at them first. */
+export function clearUserTimingEntries(): void {
+  performance.clearMarks()
+  performance.clearMeasures()
+}
+
 /** Drops every user-timing mark and measure; returns how many were dropped. */
 export function dropUserTimingEntries(): number {
   const count = userTimingEntryCount()
-  if (count > 0) {
-    performance.clearMarks()
-    performance.clearMeasures()
-  }
+  if (count > 0) clearUserTimingEntries()
   return count
 }
 
 /**
  * Drops user-timing entries every `intervalMs` until the returned stop
  * function is called. The timer is unref'd so it never keeps the process alive;
- * stopping drops whatever accumulated since the last tick.
+ * stopping drops whatever accumulated since the last tick. The tick clears
+ * blind: counting first would copy the buffer it is about to empty.
  */
 export function startUserTimingGuard(intervalMs = USER_TIMING_GUARD_INTERVAL_MS): () => void {
-  const timer = setInterval(dropUserTimingEntries, intervalMs)
+  const timer = setInterval(clearUserTimingEntries, intervalMs)
   timer.unref()
   let stopped = false
   return () => {
