@@ -77,9 +77,22 @@ function claudeSlugFallbackPath(dirName: string): string {
   return dirName
 }
 
-function normalizeProjectPathKey(projectPath: string): string {
+/// Drive-letter and UNC (`//server/share` after slash-normalize) are Windows
+/// identity: directory case folds. A single leading slash is POSIX and does not.
+function isWindowsAbsPath(slashNormalized: string): boolean {
+  return /^[a-zA-Z]:(\/|$)/.test(slashNormalized) || slashNormalized.startsWith('//')
+}
+
+export function foldIdentifiedWindowsPath(slashNormalized: string): string {
+  return isWindowsAbsPath(slashNormalized) ? slashNormalized.toLowerCase() : slashNormalized
+}
+
+/// Cache/live grouping key for a stored cwd. Separators always normalize.
+/// Identified Windows paths casefold; POSIX case is identity.
+export function normalizeProjectPathKey(projectPath: string): string {
   const normalized = projectPath.trim().replace(/\\/g, '/')
-  return (normalized.replace(/\/+$/, '') || normalized).toLowerCase()
+  const trimmed = normalized.replace(/\/+$/, '') || normalized
+  return foldIdentifiedWindowsPath(trimmed)
 }
 
 function projectNameFromPath(projectPath: string, fallback: string): string {
@@ -4221,7 +4234,12 @@ export async function parseProviderSources(
     }
   }
 
-  const projectMap = new Map<string, { projectPath?: string; sessions: SessionSummary[] }>()
+  // #1260: group by absolute projectPath / workingDirectory when
+  // available — never by display basename alone. Two Pi roots with cwd=/a/vault
+  // and /b/vault both display as "vault"; keying on the leaf collapsed them
+  // (first projectPath wins) before mergeProjectsByCrossProviderKey could see
+  // distinct abs identities.
+  const projectMap = new Map<string, { project: string; projectPath?: string; sessions: SessionSummary[] }>()
   for (const [key, { project, projectPath, workingDirectory, turns, prLinks, title, lineage, agentName, agentStartedAt }] of sessionMap) {
     const sessionId = key.split(':')[1] ?? key
     const assembledTurns = providerName === 'copilot'
@@ -4242,19 +4260,28 @@ export async function parseProviderSources(
     // Supplementary-only sessions (e.g. a rollup with no per-turn calls) have
     // apiCalls 0 by design but their tokens/cost are real and must serve.
     if (session.apiCalls > 0 || session.totalCostUSD > 0 || session.totalInputTokens + session.totalOutputTokens + session.totalCacheReadTokens + session.totalCacheWriteTokens + session.totalReasoningTokens > 0) {
-      const existing = projectMap.get(project)
+      const absFromPath = projectPath ? normalizeAbsProjectPathKey(projectPath) : null
+      const absFromWd = workingDirectory ? normalizeAbsProjectPathKey(workingDirectory) : null
+      const absKey = absFromPath ?? absFromWd
+      const groupKey = absKey ? `path:${absKey}` : `label:${project}`
+      const resolvedPath = absFromPath ? projectPath : (absFromWd ? workingDirectory : projectPath)
+      const existing = projectMap.get(groupKey)
       if (existing) {
         existing.sessions.push(session)
-        if (!existing.projectPath && projectPath) existing.projectPath = projectPath
+        if (absFromPath && !normalizeAbsProjectPathKey(existing.projectPath ?? '')) {
+          existing.projectPath = projectPath
+        } else if (!existing.projectPath && resolvedPath) {
+          existing.projectPath = resolvedPath
+        }
       } else {
-        projectMap.set(project, { projectPath, sessions: [session] })
+        projectMap.set(groupKey, { project, projectPath: resolvedPath, sessions: [session] })
       }
     }
   }
 
   const projects: ProjectSummary[] = []
-  for (const [dirName, { projectPath, sessions }] of projectMap) {
-    projects.push(summarizeProject(dirName, projectPath ?? unsanitizePath(dirName), sessions))
+  for (const { project, projectPath, sessions } of projectMap.values()) {
+    projects.push(summarizeProject(project, projectPath ?? unsanitizePath(project), sessions))
   }
 
   return projects
@@ -4573,28 +4600,148 @@ export function filterProjectsByDays(projects: ProjectSummary[], days: Set<strin
 // same repo used with Claude Code + Codex, say). An additive total summed at
 // the session level but forgotten here silently under-reports for exactly the
 // multi-provider users (this bit totalEstimatedCostUSD once, caught in #639
-// verification). Known gaps, deliberate: totalSavingsUSD is still not summed
-// (pre-existing, tracked separately) and totalProxiedCostUSD is re-derived
-// after the merge rather than summed here.
-export function mergeProjectsByCrossProviderKey(projects: ProjectSummary[]): Map<string, ProjectSummary> {
-  const crossProviderKey = (p: ProjectSummary): string => {
-    const path = p.projectPath.replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase()
-    return path.includes('/') ? path : p.project.toLowerCase()
+// verification). totalSavingsUSD is summed with cost/calls. totalProxiedCostUSD
+// is re-derived after the merge rather than summed here.
+//
+// #1260: providers sanitize the same absolute cwd differently (-root-vault /
+// root-vault / vault). Prefer absolute projectPath (or session.workingDirectory)
+// as the merge key; attach slug/basename-only rows only when they uniquely match
+// one absolute path. Ambiguous basenames across distinct parents stay separate.
+// POSIX path case is identity: /a/Vault and /a/vault are two keys. Identified
+// Windows drive/UNC paths still casefold (C:\\Work\\Vault ≡ c:/work/vault).
+// Lowercased labels are matching hints only — two path keys sharing a hint
+// stay unattached.
+export function normalizeAbsProjectPathKey(projectPath: string): string | null {
+  const raw = projectPath.trim().replace(/\\/g, '/')
+  if (!raw) return null
+  // Absolute POSIX, Windows drive, or Codex-style stripped abs ("root/vault").
+  const looksAbs = raw.startsWith('/') || /^[a-zA-Z]:\//.test(raw) || (raw.includes('/') && !raw.startsWith('-'))
+  if (!looksAbs) return null
+  const folded = foldIdentifiedWindowsPath(raw)
+  const stripped = folded.replace(/^\/+/, '').replace(/\/+$/, '')
+  return stripped || null
+}
+
+function sanitizePathAsLabel(absKey: string): string {
+  return absKey.replace(/\//g, '-')
+}
+
+function labelAliases(project: string): string[] {
+  const raw = project.trim().replace(/\\/g, '/').toLowerCase()
+  if (!raw) return []
+  const noLeadDash = raw.replace(/^-+/, '')
+  return [...new Set([raw, noLeadDash].filter(Boolean))]
+}
+
+function foldInto(existing: ProjectSummary, p: ProjectSummary): void {
+  existing.sessions.push(...p.sessions)
+  if (p.subagentAnchors?.length) existing.subagentAnchors = [...(existing.subagentAnchors ?? []), ...p.subagentAnchors]
+  existing.totalCostUSD += p.totalCostUSD
+  existing.totalSavingsUSD = (existing.totalSavingsUSD ?? 0) + (p.totalSavingsUSD ?? 0)
+  existing.totalEstimatedCostUSD = (existing.totalEstimatedCostUSD ?? 0) + (p.totalEstimatedCostUSD ?? 0)
+  existing.totalApiCalls += p.totalApiCalls
+}
+
+export function crossProviderProjectKey(p: ProjectSummary): string {
+  const fromPath = normalizeAbsProjectPathKey(p.projectPath)
+  if (fromPath) return `path:${fromPath}`
+  const wd = p.sessions.map(s => s.workingDirectory).find(w => typeof w === 'string' && w.trim())
+  if (wd) {
+    const fromWd = normalizeAbsProjectPathKey(wd)
+    if (fromWd) return `path:${fromWd}`
   }
-  const mergedMap = new Map<string, ProjectSummary>()
+  const aliases = labelAliases(p.project)
+  return `label:${aliases[0] ?? p.project.toLowerCase()}`
+}
+
+const SANITIZED_COLLISION = '__collision__'
+
+function registerSanitizedLabel(
+  pathBySanitized: Map<string, string>,
+  sanitizedMembers: Map<string, Set<string>>,
+  label: string,
+  key: string,
+): void {
+  const members = sanitizedMembers.get(label) ?? new Set<string>()
+  members.add(key)
+  sanitizedMembers.set(label, members)
+  const prev = pathBySanitized.get(label)
+  if (prev === undefined) {
+    pathBySanitized.set(label, key)
+    return
+  }
+  if (prev !== key) pathBySanitized.set(label, SANITIZED_COLLISION)
+}
+
+export function mergeProjectsByCrossProviderKey(projects: ProjectSummary[]): Map<string, ProjectSummary> {
+  const pathProjects = new Map<string, ProjectSummary>()
+  const pathBySanitized = new Map<string, string>()
+  const sanitizedMembers = new Map<string, Set<string>>()
+  const pathByBasename = new Map<string, string[]>()
+  const deferred: ProjectSummary[] = []
+
   for (const p of projects) {
-    const key = crossProviderKey(p)
-    const existing = mergedMap.get(key)
+    const key = crossProviderProjectKey(p)
+    if (!key.startsWith('path:')) {
+      deferred.push(p)
+      continue
+    }
+    const abs = key.slice('path:'.length)
+    const existing = pathProjects.get(key)
     if (existing) {
-      existing.sessions.push(...p.sessions)
-      if (p.subagentAnchors?.length) existing.subagentAnchors = [...(existing.subagentAnchors ?? []), ...p.subagentAnchors]
-      existing.totalCostUSD += p.totalCostUSD
-      existing.totalEstimatedCostUSD = (existing.totalEstimatedCostUSD ?? 0) + (p.totalEstimatedCostUSD ?? 0)
-      existing.totalApiCalls += p.totalApiCalls
+      foldInto(existing, p)
+      if (normalizeAbsProjectPathKey(p.projectPath) && !normalizeAbsProjectPathKey(existing.projectPath)) {
+        existing.projectPath = p.projectPath
+        existing.project = p.project
+      }
     } else {
-      mergedMap.set(key, { ...p })
+      pathProjects.set(key, { ...p })
+      const sanitized = sanitizePathAsLabel(abs).toLowerCase()
+      registerSanitizedLabel(pathBySanitized, sanitizedMembers, sanitized, key)
+      registerSanitizedLabel(pathBySanitized, sanitizedMembers, `-${sanitized}`, key)
+      const base = abs.split('/').filter(Boolean).pop()
+      if (base) {
+        const hint = base.toLowerCase()
+        const bucket = pathByBasename.get(hint) ?? []
+        bucket.push(key)
+        pathByBasename.set(hint, bucket)
+      }
     }
   }
+
+  const labelOnly = new Map<string, ProjectSummary>()
+  for (const p of deferred) {
+    // Collect ALL candidates from sanitized + basename maps across aliases.
+    // On sanitized COLLISION, retain the full member set (do not ignore collision
+    // so a weaker basename unique-hit can still attach). Attach only when exactly
+    // one path key remains; otherwise stay label-only.
+    const candidates = new Set<string>()
+    for (const alias of labelAliases(p.project)) {
+      const viaSanitized = pathBySanitized.get(alias)
+      if (viaSanitized === SANITIZED_COLLISION) {
+        const members = sanitizedMembers.get(alias)
+        if (members) for (const m of members) candidates.add(m)
+      } else if (viaSanitized) {
+        candidates.add(viaSanitized)
+      }
+      const bases = pathByBasename.get(alias)
+      if (bases) for (const b of bases) candidates.add(b)
+    }
+    if (candidates.size === 1) {
+      const attach = [...candidates][0]!
+      foldInto(pathProjects.get(attach)!, p)
+      continue
+    }
+    // size === 0: no match; size > 1: ambiguous (sanitized collision, multi-parent, …)
+    const labelKey = `label:${labelAliases(p.project)[0] ?? p.project.toLowerCase()}`
+    const existing = labelOnly.get(labelKey)
+    if (existing) foldInto(existing, p)
+    else labelOnly.set(labelKey, { ...p })
+  }
+
+  const mergedMap = new Map<string, ProjectSummary>()
+  for (const [k, v] of pathProjects) mergedMap.set(k, v)
+  for (const [k, v] of labelOnly) mergedMap.set(k, v)
   return mergedMap
 }
 

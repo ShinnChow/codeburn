@@ -8,12 +8,34 @@ import { describe, expect, it, vi } from 'vitest'
 import { CACHE_SCHEMA_VERSION } from '../src/models.js'
 
 // Each distinct query gets its own `status-snapshot.<queryKeyHash>.json` file
-// (review finding B-G1) rather than one shared fixed path — these tests
+// rather than one shared fixed path — these tests
 // don't know the hash up front, so they locate whatever landed by pattern.
 const SNAPSHOT_FILE_RE = /^status-snapshot\.[0-9a-f]+\.json$/
 function findSnapshotFiles(cacheDir: string): string[] {
   if (!existsSync(cacheDir)) return []
   return readdirSync(cacheDir).filter(f => SNAPSHOT_FILE_RE.test(f)).map(f => join(cacheDir, f))
+}
+
+function stripSessionCountBasis(value: unknown): void {
+  if (Array.isArray(value)) {
+    for (const item of value) stripSessionCountBasis(item)
+    return
+  }
+  if (value && typeof value === 'object') {
+    const rec = value as Record<string, unknown>
+    delete rec.sessionCountBasis
+    for (const child of Object.values(rec)) stripSessionCountBasis(child)
+  }
+}
+
+/** Plant a same-package v5 snapshot whose payload still has costs/totals but
+ *  predates sessionCountBasis. The live corpus is left unchanged. */
+async function plantRender5MissingBasis(snapshotPath: string): Promise<string> {
+  const record = JSON.parse(await readFile(snapshotPath, 'utf-8')) as { semanticKey: string, payload: unknown }
+  record.semanticKey = record.semanticKey.replace(/:render-\d+:/, ':render-5:')
+  stripSessionCountBasis(record.payload)
+  await writeFile(snapshotPath, JSON.stringify(record))
+  return record.semanticKey
 }
 
 // Every case here spawns the real CLI and does genuine multi-provider parse
@@ -883,6 +905,183 @@ describe('codeburn status --format menubar-json', () => {
         calls: 1,
         hasUsage: true,
       })
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a pre-count-basis render-5 snapshot on an empty unchanged corpus', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'codeburn-menubar-legacy-basis-empty-'))
+
+    try {
+      const args = ['status', '--format', 'menubar-json', '--period', 'today', '--provider', 'all', '--no-optimize']
+      const first = runCli(args, home)
+      expect(first.status, `stderr: ${first.stderr}`).toBe(0)
+      const original = JSON.parse(first.stdout) as { current: { sessions: number, sessionCountBasis?: string, cost: number, calls: number } }
+      expect(original.current.sessionCountBasis).toBe('identity')
+      expect(original.current.sessions).toBe(0)
+
+      const snapshotFiles = findSnapshotFiles(join(home, '.cache', 'codeburn'))
+      expect(snapshotFiles).toHaveLength(1)
+      const plantedKey = await plantRender5MissingBasis(snapshotFiles[0]!)
+      expect(plantedKey).toContain(':render-5:')
+
+      const second = runCli(args, home)
+      expect(second.status, `stderr: ${second.stderr}`).toBe(0)
+      const payload = JSON.parse(second.stdout) as { current: { sessions: number, sessionCountBasis?: string, cost: number, calls: number } }
+      expect(payload.current.sessionCountBasis).toBe('identity')
+      expect(payload.current.sessions).toBe(0)
+      expect(payload.current.cost).toBe(original.current.cost)
+      expect(payload.current.calls).toBe(original.current.calls)
+
+      const rewritten = JSON.parse(await readFile(snapshotFiles[0]!, 'utf-8')) as { semanticKey: string }
+      expect(rewritten.semanticKey).toContain(':render-6:')
+      expect(rewritten.semanticKey).not.toContain(':render-5:')
+
+      const third = runCli(args, home)
+      expect(third.status, `stderr: ${third.stderr}`).toBe(0)
+      expect(third.stdout).toBe(second.stdout)
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a pre-count-basis render-5 snapshot and preserves nonempty costs', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'codeburn-menubar-legacy-basis-live-'))
+
+    try {
+      const projectDir = join(home, '.claude', 'projects', 'myapp')
+      await mkdir(projectDir, { recursive: true })
+      const now = new Date()
+      const todayUtcMidnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+      const base = new Date(Math.max(todayUtcMidnight, now.getTime() - 2 * 3600_000))
+      const ts = (offset: number) => new Date(base.getTime() + offset).toISOString().replace(/\.\d+Z$/, 'Z')
+      await writeFile(
+        join(projectDir, 'session.jsonl'),
+        [userLine('s1', ts(0)), assistantLine('s1', ts(60_000), 'msg-1')].join('\n'),
+      )
+
+      const args = ['status', '--format', 'menubar-json', '--period', 'today', '--provider', 'all', '--no-optimize']
+      const first = runCli(args, home)
+      expect(first.status, `stderr: ${first.stderr}`).toBe(0)
+      const original = JSON.parse(first.stdout) as {
+        current: {
+          cost: number
+          calls: number
+          sessions: number
+          sessionCountBasis?: string
+          topProjects: Array<{ cost: number, sessions: number, sessionCountBasis?: string }>
+        }
+      }
+      expect(original.current.calls).toBe(1)
+      expect(original.current.sessions).toBe(1)
+      expect(original.current.sessionCountBasis).toBe('partial')
+      expect(original.current.cost).toBeGreaterThan(0)
+
+      const snapshotFiles = findSnapshotFiles(join(home, '.cache', 'codeburn'))
+      expect(snapshotFiles).toHaveLength(1)
+      await plantRender5MissingBasis(snapshotFiles[0]!)
+
+      const second = runCli(args, home)
+      expect(second.status, `stderr: ${second.stderr}`).toBe(0)
+      const payload = JSON.parse(second.stdout) as {
+        current: {
+          cost: number
+          calls: number
+          sessions: number
+          sessionCountBasis?: string
+          topProjects: Array<{ cost: number, sessions: number, sessionCountBasis?: string }>
+        }
+      }
+      expect(payload.current.cost).toBe(original.current.cost)
+      expect(payload.current.calls).toBe(original.current.calls)
+      expect(payload.current.sessions).toBe(original.current.sessions)
+      expect(payload.current.sessionCountBasis).toBe(original.current.sessionCountBasis)
+      expect(payload.current.topProjects[0]).toMatchObject({
+        cost: original.current.topProjects[0]!.cost,
+        sessions: original.current.topProjects[0]!.sessions,
+        sessionCountBasis: original.current.topProjects[0]!.sessionCountBasis,
+      })
+
+      const third = runCli(args, home)
+      expect(third.status, `stderr: ${third.stderr}`).toBe(0)
+      expect(third.stdout).toBe(second.stdout)
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps unknown retained accounting partial after rejecting a render-5 snapshot', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'codeburn-menubar-legacy-basis-partial-'))
+
+    try {
+      const projectDir = join(home, '.claude', 'projects', 'myapp')
+      await mkdir(projectDir, { recursive: true })
+      const now = new Date()
+      const todayUtcMidnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+      const base = new Date(Math.max(todayUtcMidnight, now.getTime() - 2 * 3600_000))
+      const ts = (offset: number) => new Date(base.getTime() + offset).toISOString().replace(/\.\d+Z$/, 'Z')
+      await writeFile(
+        join(projectDir, 'session.jsonl'),
+        [userLine('s1', ts(0)), assistantLine('s1', ts(60_000), 'msg-1')].join('\n'),
+      )
+
+      const args = ['status', '--format', 'menubar-json', '--period', 'all', '--provider', 'all', '--no-optimize']
+      const first = runCli(args, home)
+      expect(first.status, `stderr: ${first.stderr}`).toBe(0)
+      const original = JSON.parse(first.stdout) as { current: { cost: number, calls: number, sessions: number, sessionCountBasis?: string } }
+      expect(original.current.sessionCountBasis).toBe('partial')
+      expect(original.current.sessions).toBe(1)
+
+      const cacheDir = join(home, '.cache', 'codeburn')
+      const dailyFiles = readdirSync(cacheDir).filter(f => /^daily-cache\.v\d+\.json$/.test(f))
+      expect(dailyFiles).toHaveLength(1)
+      const dailyPath = join(cacheDir, dailyFiles[0]!)
+      const daily = JSON.parse(await readFile(dailyPath, 'utf-8')) as {
+        version: number
+        days: Array<Record<string, unknown>>
+      }
+      const carriedDate = new Date(todayUtcMidnight - 10 * 24 * 3600_000).toISOString().slice(0, 10)
+      daily.days.push({
+        date: carriedDate,
+        cost: 100,
+        savingsUSD: 0,
+        calls: 40,
+        sessions: 3,
+        inputTokens: 5000,
+        outputTokens: 2000,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        editTurns: 4,
+        oneShotTurns: 2,
+        models: { 'Opus 4.8': { calls: 40, cost: 100, savingsUSD: 0, inputTokens: 5000, outputTokens: 2000, cacheReadTokens: 0, cacheWriteTokens: 0 } },
+        categories: { coding: { turns: 10, cost: 100, savingsUSD: 0, editTurns: 4, oneShotTurns: 2 } },
+        providers: {
+          claude: {
+            calls: 40, cost: 100, savingsUSD: 0, sessions: 3,
+            inputTokens: 5000, outputTokens: 2000, cacheReadTokens: 0, cacheWriteTokens: 0,
+            projects: { 'proj-x': { cost: 100, calls: 40, savingsUSD: 0, sessions: 3, path: '/Users/gone/proj-x' } },
+          },
+        },
+        projects: { 'proj-x': { cost: 100, calls: 40, savingsUSD: 0, sessions: 3, path: '/Users/gone/proj-x' } },
+        carried: true,
+      })
+      await writeFile(dailyPath, JSON.stringify(daily))
+
+      const snapshotFiles = findSnapshotFiles(cacheDir)
+      expect(snapshotFiles).toHaveLength(1)
+      await plantRender5MissingBasis(snapshotFiles[0]!)
+
+      const second = runCli(args, home)
+      expect(second.status, `stderr: ${second.stderr}`).toBe(0)
+      const payload = JSON.parse(second.stdout) as { current: { cost: number, calls: number, sessions: number, sessionCountBasis?: string } }
+      expect(payload.current.sessionCountBasis).toBe('partial')
+      expect(payload.current.sessions).toBe(3)
+      expect(payload.current.cost).toBeCloseTo(original.current.cost + 100, 5)
+      expect(payload.current.calls).toBe(original.current.calls + 40)
+
+      const dailyAfter = readdirSync(cacheDir).filter(f => /^daily-cache\.v\d+\.json$/.test(f))
+      expect(dailyAfter).toEqual(dailyFiles)
     } finally {
       await rm(home, { recursive: true, force: true })
     }

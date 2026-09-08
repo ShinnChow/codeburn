@@ -46,13 +46,13 @@ describe('buildMenubarPayloadForRange', () => {
 // all-providers). The dock's glance reads these per-provider figures, so a sum
 // that leaked across providers would print another provider's spend.
 describe('addProviderSlice', () => {
-  it('sums cost, calls, tokens and sessions per provider across days', () => {
+  it('sums cost, calls and tokens; session ticks stay a per-day max bound', () => {
     const totals: Record<string, ProviderSliceTotal> = {}
     addProviderSlice(totals, 'claude', { cost: 10, calls: 4, savingsUSD: 0, inputTokens: 100, outputTokens: 20, sessions: 2 })
     addProviderSlice(totals, 'claude', { cost: 2.5, calls: 1, savingsUSD: 0, inputTokens: 50, outputTokens: 5, sessions: 1 })
     addProviderSlice(totals, 'codex', { cost: 1, calls: 3, savingsUSD: 0, inputTokens: 7, outputTokens: 3, sessions: 1 })
 
-    expect(totals.claude).toEqual({ cost: 12.5, calls: 5, hasUsage: true, inputTokens: 150, outputTokens: 25, sessions: 3 })
+    expect(totals.claude).toEqual({ cost: 12.5, calls: 5, hasUsage: true, inputTokens: 150, outputTokens: 25, sessions: 2 })
     expect(totals.codex).toEqual({ cost: 1, calls: 3, hasUsage: true, inputTokens: 7, outputTokens: 3, sessions: 1 })
   })
 

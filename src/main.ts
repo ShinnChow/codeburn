@@ -58,9 +58,16 @@ const { version } = require('../package.json')
 // v5: providerDetails carries per-provider tokens and sessions, which a v4
 // record predates — the dock glance would read a provider as having no token
 // breakdown purely because the snapshot was written before this build.
-const STATUS_SNAPSHOT_RENDER_VERSION = 5
+// v6: sessionCountBasis is now part of payload meaning. A same-package v5
+// snapshot written before that field existed still matches the v5 semantic
+// key; omitting it makes empty identity-0 read as undefined-0 ("unavailable")
+// and nonempty exact counts as a bound. Daily and session cache versions stay
+// put: retained unknown accounting must remain a partial bound, not be
+// discarded to regain exact labels.
+const STATUS_SNAPSHOT_RENDER_VERSION = 6
 const STATUS_SNAPSHOT_SEMANTIC_KEY = `${version}:render-${STATUS_SNAPSHOT_RENDER_VERSION}:daily-${DAILY_CACHE_VERSION}`
 import { loadCurrency, getCurrency, isValidCurrencyCode } from './currency.js'
+import { sessionCountIsExact } from './session-count-label.js'
 import { CodexThroughputReader, newestCodexSession, renderCodexThroughput } from './codex-throughput.js'
 
 // A downstream reader that closes the pipe early (`| head`, quitting `less`, or
@@ -565,16 +572,18 @@ function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: 
         }
       })
 
+  const sessionCountBasis = durable.data.sessionCountBasis
   const projectList = projects.map(p => ({
     name: p.project,
     path: p.projectPath,
     cost: convertCost(p.totalCostUSD),
     savings: convertCost(p.totalSavingsUSD),
-    avgCostPerSession: p.sessions.length > 0
-      ? convertCost(p.totalCostUSD / p.sessions.length)
-      : null,
+    ...(sessionCountIsExact(sessionCountBasis) && p.sessions.length > 0
+      ? { avgCostPerSession: convertCost(p.totalCostUSD / p.sessions.length) }
+      : {}),
     calls: p.totalApiCalls,
     sessions: p.sessions.length,
+    ...(sessionCountBasis ? { sessionCountBasis } : {}),
   }))
 
   const modelMap: Record<string, { calls: number; cost: number; savings: number; estimatedCost: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; baselineModel: string }> = {}
@@ -737,6 +746,7 @@ function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: 
       estimatedCost: convertCost(totalEstimatedUSD),
       calls: totalCalls,
       sessions: totalSessions,
+      ...(sessionCountBasis ? { sessionCountBasis } : {}),
       cacheHitPercent,
       tokens: {
         input: totalInput,
@@ -999,6 +1009,7 @@ program
         savingsUSD: durable.data.savingsUSD,
         calls: durable.data.calls,
         sessions: durable.data.sessions,
+        sessionCountBasis: durable.data.sessionCountBasis,
         inputTokens: durable.data.inputTokens,
         outputTokens: durable.data.outputTokens,
         cacheReadTokens: durable.data.cacheReadTokens,
