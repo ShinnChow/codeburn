@@ -497,13 +497,15 @@ function unionDaysForPeriod(
   // still wins (nothing live can outbid it), and an under-read cached row stops
   // suppressing evidence that is sitting on disk. Only dates the cache already
   // holds are reconciled — filling absent dates is a separate decision each
-  // caller makes for itself.
+  // caller makes for itself. The cache day's own `carried` flag is the only
+  // provenance there is: re-flagging here would mark every date the live parse
+  // agrees on (the common case) as preserved from expired logs.
   const cachedDates = new Set(historicalDays.map(d => d.date))
   const liveForCachedDates = liveHistoricalDays.filter(d =>
     cachedDates.has(d.date) && (!daysSelection || daysSelection.has(d.date)),
   )
   const reconciledDays = liveForCachedDates.length > 0
-    ? mergeDayEntries(liveForCachedDates, historicalDays, true, undefined, 'prefer-richer')
+    ? mergeDayEntries(liveForCachedDates, historicalDays, false, undefined, 'prefer-richer')
     : historicalDays
   const todayInRange = todayAllDays.filter(d => d.date >= rangeStartStr && d.date <= rangeEndStr)
   const unfiltered = [...reconciledDays, ...todayInRange].sort((a, b) => a.date.localeCompare(b.date))

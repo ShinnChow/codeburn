@@ -173,6 +173,34 @@ describe('a frozen under-read no longer suppresses the sources on disk', () => {
     expect(durable.carriedCostUSD).toBe(0)
   })
 
+  it('does not mark a day carried when the cache and the live parse agree', async () => {
+    await seedHistoricalSession(past)
+    const live = await liveOnly(weekRange())
+    await seedCache([dayEntry(past, { claude: slice(live.cost, live.calls) })])
+
+    clearSessionCache()
+    const durable = await buildDurablePeriod({ range: weekRange(), label: 'p' })
+
+    expect(durable.data.calls).toBe(live.calls)
+    expect(durable.carriedCostUSD).toBe(0)
+  })
+
+  it('keeps the carried mark on a day only one of whose providers still has sources', async () => {
+    await seedHistoricalSession(past)
+    const live = await liveOnly(weekRange())
+    // Claude's transcript is on disk; codex's is long gone. The day is one row,
+    // so its carried mark is the only record that part of it cannot be re-read.
+    await seedCache([
+      dayEntry(past, { claude: slice(live.cost / 4, 1), codex: slice(50, 20) }, { carried: true }),
+    ])
+
+    clearSessionCache()
+    const durable = await buildDurablePeriod({ range: weekRange(), label: 'p' })
+
+    expect(durable.data.calls).toBe(live.calls + 20)
+    expect(durable.carriedCostUSD).toBeCloseTo(live.cost + 50, 6)
+  })
+
   it('still carries a day whose sources really are gone', async () => {
     await seedHistoricalSession(past)
     const live = await liveOnly(weekRange())

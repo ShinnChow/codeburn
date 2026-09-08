@@ -1200,7 +1200,12 @@ export function mergeDayEntries(
         subtractSliceFromDay(existing, provider, existingSlice)
       }
       addSliceIntoDay(existing, provider, toAdd, residual)
-      if (markSecondaryCarried) existing.carried = true
+      // The result day is seeded from `primary`, which has no provenance, so a
+      // secondary day already marked carried would silently lose the mark on
+      // every date both sides hold. Re-assert it only where this slice brought
+      // calls the primary could not produce — that is what "preserved from
+      // expired session logs" claims. An equal-call slice claims nothing.
+      if (markSecondaryCarried || (day.carried && slice.calls > (existingSlice?.calls ?? 0))) existing.carried = true
     }
   }
   return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date))
