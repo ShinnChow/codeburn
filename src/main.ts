@@ -2041,6 +2041,8 @@ program
   .option('--dry-run', 'With --apply: print the plan and exit without changing anything')
   .option('--only <ids>', 'With --apply: restrict to a comma-separated list of finding ids')
   .option('--auto-revert', 'Undo applied fixes that measured no reduction (never CLAUDE.md rules)')
+  .option('--project <name>', 'Show only projects matching name (repeatable)', collect, [])
+  .option('--exclude <name>', 'Exclude projects matching name (repeatable)', collect, [])
   .action(async (opts) => {
     assertProvider(opts.provider, 'optimize')
     const format = opts.json ? 'json' : opts.format
@@ -2063,7 +2065,7 @@ program
     } else {
       ({ range, label } = getDateRange(opts.period))
     }
-    const projects = await parseAllSessions(range, opts.provider)
+    const projects = filterProjectsByName(await parseAllSessions(range, opts.provider), opts.project, opts.exclude)
     if (opts.apply) {
       const { runOptimizeApply } = await import('./act/optimize-apply.js')
       await runOptimizeApply(projects, range, { yes: opts.yes, dryRun: opts.dryRun, only: opts.only, provider: opts.provider })
@@ -2214,6 +2216,8 @@ program
   .option('--format <format>', 'Output format: tui, json', 'tui')
   .option('--model-a <model>', 'First model to compare')
   .option('--model-b <model>', 'Second model to compare')
+  .option('--project <name>', 'Show only projects matching name (repeatable)', collect, [])
+  .option('--exclude <name>', 'Exclude projects matching name (repeatable)', collect, [])
   .action(async (opts) => {
     assertProvider(opts.provider, 'compare')
     assertFormat(opts.format, ['tui', 'json'], 'compare')
@@ -2221,7 +2225,7 @@ program
     const { range, label } = getDateRange(opts.period)
     if (opts.format === 'json') {
       const { aggregateModelStats, buildCompareJson, findModelStat, renderCompareJson, scanSelfCorrections } = await import('./compare-stats.js')
-      const projects = await parseAllSessions(range, opts.provider)
+      const projects = filterProjectsByName(await parseAllSessions(range, opts.provider), opts.project, opts.exclude)
       const models = aggregateModelStats(projects)
 
       const providers = await getAllProviders()
@@ -2262,7 +2266,7 @@ program
         process.exit(1)
       }
     }
-    await renderCompare(range, opts.provider, opts.modelA, opts.modelB)
+    await renderCompare(range, opts.provider, opts.modelA, opts.modelB, opts.project, opts.exclude)
   })
 
 program
@@ -2273,6 +2277,8 @@ program
   .option('--to <date>', 'Custom range end (YYYY-MM-DD)')
   .option('--provider <provider>', 'Filter by provider (e.g. claude, codex, cursor)', 'all')
   .option('--format <format>', 'Output format: table, json', 'table')
+  .option('--project <name>', 'Show only projects matching name (repeatable)', collect, [])
+  .option('--exclude <name>', 'Exclude projects matching name (repeatable)', collect, [])
   .action(async (opts) => {
     assertProvider(opts.provider, 'audit')
     const { aggregateAudit, renderAuditTable, renderAuditJson } = await import('./audit-report.js')
@@ -2290,7 +2296,7 @@ program
       range = getDateRange(opts.period).range
     }
 
-    const projects = await parseAllSessions(range, opts.provider)
+    const projects = filterProjectsByName(await parseAllSessions(range, opts.provider), opts.project, opts.exclude)
     const rows = await aggregateAudit(projects)
 
     const fmt = (opts.format ?? 'table').toLowerCase()
@@ -2320,6 +2326,8 @@ program
   .option('--unpriced', 'Show only models with usage that currently price at $0')
   .option('--no-totals', 'Suppress the footer totals row')
   .option('--format <format>', 'Output format: table, markdown, json, csv', 'table')
+  .option('--project <name>', 'Show only projects matching name (repeatable)', collect, [])
+  .option('--exclude <name>', 'Exclude projects matching name (repeatable)', collect, [])
   .action(async (opts) => {
     assertProvider(opts.provider, 'models')
     if (opts.byTask && opts.byAgent) {
@@ -2341,7 +2349,7 @@ program
       range = getDateRange(opts.period).range
     }
 
-    const projects = await parseAllSessions(range, opts.provider)
+    const projects = filterProjectsByName(await parseAllSessions(range, opts.provider), opts.project, opts.exclude)
     const topN = typeof opts.top === 'number' && Number.isFinite(opts.top) ? opts.top : undefined
     let rows = await aggregateModels(projects, {
       byTask: !!opts.byTask,
@@ -2413,6 +2421,8 @@ program
   .option('--by-pr', 'Group spend by the pull requests each session referenced')
   .option('--by-work-unit', 'Group sessions into provider-recorded work units: one row per orchestration root with its delegated children folded beneath')
   .option('--no-pager', 'Print the complete table directly instead of opening the interactive browser')
+  .option('--project <name>', 'Show only projects matching name (repeatable)', collect, [])
+  .option('--exclude <name>', 'Exclude projects matching name (repeatable)', collect, [])
   .action(async (opts) => {
     assertProvider(opts.provider, 'sessions')
     assertFormat(opts.format, ['table', 'json'], 'sessions')
@@ -2433,7 +2443,7 @@ program
       range = getDateRange(opts.period).range
     }
 
-    const projects = await parseAllSessions(range, opts.provider)
+    const projects = filterProjectsByName(await parseAllSessions(range, opts.provider), opts.project, opts.exclude)
     if (opts.byPr) {
       const { rows: prRows, totals } = buildPrAttribution(projects)
       if (opts.format === 'json') {
@@ -2517,6 +2527,8 @@ program
   .option('-p, --period <period>', 'Analysis period: today, week, 30days, month, all, lifetime', 'week')
   .option('--provider <provider>', 'Filter by provider (e.g. claude, codex, cursor)', 'all')
   .option('--format <format>', 'Output format: text, json', 'text')
+  .option('--project <name>', 'Show only projects matching name (repeatable)', collect, [])
+  .option('--exclude <name>', 'Exclude projects matching name (repeatable)', collect, [])
   .action(async (opts) => {
     assertFormat(opts.format, ['text', 'json'], 'yield')
     assertProvider(opts.provider, 'yield')
@@ -2526,7 +2538,7 @@ program
     if (opts.format !== 'json') {
       console.log(`\n  Analyzing yield for ${label}...\n`)
     }
-    const summary = await computeYield(range, process.cwd(), opts.provider)
+    const summary = await computeYield(range, process.cwd(), opts.provider, opts.project, opts.exclude)
     if (opts.format === 'json') {
       console.log(JSON.stringify(buildYieldJsonReport(summary, label, range), null, 2))
       return
@@ -2542,6 +2554,8 @@ program
   .option('--to <date>', 'Custom range end (YYYY-MM-DD)')
   .option('--provider <provider>', 'Filter by provider (e.g. claude, codex, cursor)', 'all')
   .option('--format <format>', 'Output format: flow-json', 'flow-json')
+  .option('--project <name>', 'Show only projects matching name (repeatable)', collect, [])
+  .option('--exclude <name>', 'Exclude projects matching name (repeatable)', collect, [])
   .action(async (opts) => {
     assertFormat(opts.format, ['flow-json'], 'spend')
     assertProvider(opts.provider, 'spend')
@@ -2561,7 +2575,7 @@ program
       range = getDateRange(opts.period).range
     }
 
-    console.log(JSON.stringify(await computeSpendFlow(range, opts.provider)))
+    console.log(JSON.stringify(await computeSpendFlow(range, opts.provider, opts.project, opts.exclude)))
   })
 
 program

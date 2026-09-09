@@ -653,7 +653,7 @@ codeburn month --project api --project web       # include multiple projects
 codeburn export --project inventory              # export only "inventory" project data
 ```
 
-Filter by provider, project name (case-insensitive substring), or exact date range. The `--project` and `--exclude` flags work on all commands and can be combined with `--provider`.
+Filter by provider, project, or exact date range. The `--project` and `--exclude` flags work on every reporting command and can be combined with `--provider`. A plain word matches a project's name or path as a case-insensitive substring, so `--project my-company` also covers `my-company-kit` and its worktrees. An absolute path selects that one project and anything inside it, so `--exclude /Users/me/work/my-company` leaves the sibling `/Users/me/work/my-company-kit` alone. A leading `~` is the shell's to expand, so quote it and it is read as a plain word, not a path.
 
 ```bash
 codeburn report --from 2026-04-01 --to 2026-04-10   # explicit window

@@ -1,7 +1,7 @@
 import { execFileSync } from 'child_process'
 import { realpathSync } from 'fs'
 import { resolve } from 'path'
-import { parseAllSessions } from './parser.js'
+import { filterProjectsByName, parseAllSessions } from './parser.js'
 import { isTrustedAbsoluteWorkingDirectory } from './path-privacy.js'
 import type { DateRange, ProjectSummary, SessionSummary } from './types.js'
 
@@ -460,8 +460,8 @@ function buildRepoGroups(
   return repoGroups
 }
 
-export async function computeYield(range: DateRange, cwd: string, provider: string = 'all'): Promise<YieldSummary> {
-  const projects = await parseAllSessions(range, provider)
+export async function computeYield(range: DateRange, cwd: string, provider: string = 'all', projectFilter?: string[], excludeFilter?: string[]): Promise<YieldSummary> {
+  const projects = filterProjectsByName(await parseAllSessions(range, provider), projectFilter, excludeFilter)
 
   const summary: YieldSummary = {
     productive: { cost: 0, sessions: 0 },
