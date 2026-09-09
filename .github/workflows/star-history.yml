@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 concurrency:
   group: star-history
@@ -15,14 +14,15 @@ concurrency:
 
 jobs:
   update:
+    if: github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
       # Pin the action to an immutable revision because this workflow grants
       # write access to the repository. commit: false keeps generation here;
-      # publishing goes through a persistent PR so main's pull-request rule
-      # (GH013) is preserved.
+      # publishing is a rolling review branch so main's pull-request rule
+      # (GH013) is preserved. This workflow does not open pull requests.
       - id: charts
         uses: narayann7/star-history-action@a68d8f9d67ca20d55b682a264e69152dcf326e9c
         with:
@@ -33,12 +33,13 @@ jobs:
           width: "960"
           commit: "false"
 
-      - name: Open or update star-history PR
+      - name: Prepare star-history review branch
         if: steps.charts.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH: chore/star-history
-          BASE: ${{ github.ref_name }}
+          BASE: ${{ github.event.repository.default_branch }}
+          SERVER: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
 
@@ -61,17 +62,18 @@ jobs:
             git push -u origin "HEAD:refs/heads/${BRANCH}"
           fi
 
-          if [ "$(gh pr view "$BRANCH" --json state --jq '.state' 2>/dev/null || true)" = "OPEN" ]; then
-            echo "Updated existing pull request for ${BRANCH}."
-            exit 0
-          fi
-
-          body=$(cat <<'EOF'
-          Refresh the README star-history charts from the scheduled generator.
-
-          Main requires pull requests, so this workflow publishes through this persistent branch instead of pushing to main.
-
-          Authored by github-actions[bot]. A later run that sees a chart change updates this same PR; a no-change run is a no-op.
-          EOF
-          )
-          gh pr create --head "$BRANCH" --base "$BASE" --title "chore: update star history" --body "$body"
+          compare_url="${SERVER}/${REPOSITORY}/compare/${BASE}...${BRANCH}?expand=1"
+          {
+            echo "## Star history review branch"
+            echo
+            echo "Charts changed. The rolling review branch was published; open or refresh the pull request from this comparison URL. Actions does not create or approve pull requests."
+            echo
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Server | ${SERVER} |"
+            echo "| Repository | ${REPOSITORY} |"
+            echo "| Base | ${BASE} |"
+            echo "| Branch | ${BRANCH} |"
+            echo
+            echo "[Open pull request]($compare_url)"
+          } >> "$GITHUB_STEP_SUMMARY"
