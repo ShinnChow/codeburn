@@ -4413,6 +4413,26 @@ export function setCachePutMeta(meta: { startMs: number; endMs: number; sig: str
   putMeta = meta
 }
 
+export function isRootedProjectPattern(pattern: string): boolean {
+  const raw = pattern.trim().replace(/\\/g, '/')
+  return raw.startsWith('/') || /^[a-zA-Z]:\//.test(raw)
+}
+
+/// An absolute path names ONE project, so it anchors on a segment boundary (the
+/// isProxiedPath rule): "/a/proj" takes "/a/proj/sub" but not "/a/proj-ui-kit".
+/// Both sides key through normalizeAbsProjectPathKey (Windows casefolds, POSIX
+/// does not, #1260), and rootedness alone picks the branch, so "/" names none.
+export function matchesProjectPattern(project: { project: string; projectPath?: string }, pattern: string): boolean {
+  const projectPath = project.projectPath ?? ''
+  if (isRootedProjectPattern(pattern)) {
+    const anchor = normalizeAbsProjectPathKey(pattern)
+    const target = normalizeAbsProjectPathKey(projectPath)
+    return anchor !== null && target !== null && (target === anchor || target.startsWith(anchor + '/'))
+  }
+  const needle = pattern.toLowerCase()
+  return project.project.toLowerCase().includes(needle) || projectPath.toLowerCase().includes(needle)
+}
+
 export function filterProjectsByName(
   projects: ProjectSummary[],
   include?: string[],
@@ -4420,20 +4440,10 @@ export function filterProjectsByName(
 ): ProjectSummary[] {
   let result = projects
   if (include && include.length > 0) {
-    const patterns = include.map(s => s.toLowerCase())
-    result = result.filter(p => {
-      const name = p.project.toLowerCase()
-      const path = p.projectPath.toLowerCase()
-      return patterns.some(pat => name.includes(pat) || path.includes(pat))
-    })
+    result = result.filter(p => include.some(pattern => matchesProjectPattern(p, pattern)))
   }
   if (exclude && exclude.length > 0) {
-    const patterns = exclude.map(s => s.toLowerCase())
-    result = result.filter(p => {
-      const name = p.project.toLowerCase()
-      const path = p.projectPath.toLowerCase()
-      return !patterns.some(pat => name.includes(pat) || path.includes(pat))
-    })
+    result = result.filter(p => !exclude.some(pattern => matchesProjectPattern(p, pattern)))
   }
   return result
 }

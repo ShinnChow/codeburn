@@ -3,7 +3,7 @@ import { CATEGORY_LABELS, type ProjectSummary, type SessionSummary, type TaskCat
 import { isBehavioralCall } from './behavioral-weight.js'
 import { type PeriodData, type ProviderCost, type BreakdownArrays, type MenubarPayload, type ClaudeConfigSelector, type HydrationState, buildMenubarPayload } from './menubar-json.js'
 import { type SessionCountBasis } from './session-count-label.js'
-import { parseAllSessions, filterProjectsByName, filterProjectsByDays, filterProjectsByClaudeConfigSource, filterProjectsByDateRange, isSessionHydrationComplete, sessionHydrationSnapshot } from './parser.js'
+import { parseAllSessions, filterProjectsByName, filterProjectsByDays, filterProjectsByClaudeConfigSource, filterProjectsByDateRange, isSessionHydrationComplete, matchesProjectPattern, sessionHydrationSnapshot } from './parser.js'
 import { findUnpricedModels, getFlatRateModelsConfigHash, getLocalModelSavingsConfigHash, getPriceOverridesConfigHash, getShortModelName, isExpectedFreeModel } from './models.js'
 import { getAllProviders, safeDiscoverSessions } from './providers/index.js'
 import { loadPlugins, pluginPayloadSections } from './plugins/loader.js'
@@ -376,17 +376,17 @@ export function overlayProviderDaySlices(
   return mergeDayEntries(freshSliced, sliced, false, undefined, true)
 }
 
-/// Does a cached day's project entry pass the active name filters? Mirrors
-/// parser.filterProjectsByName exactly — case-insensitive substring match
-/// against the project name OR its filesystem path, include first then exclude —
-/// so a filter selects the same projects whether it is resolved against a fresh
-/// parse or against the day cache. Patterns arrive pre-lowercased. `path` is
+/// Does a cached day's project entry pass the active name filters? Delegates to
+/// the one rule filterProjectsByName applies, so a filter selects the same
+/// projects whether it is resolved against a fresh parse or against the day
+/// cache — a second copy here put anchored live days and substring-matched
+/// cached days inside one headline. Patterns arrive raw: the rule casefolds
+/// identified Windows paths itself and keeps POSIX case as identity. `path` is
 /// absent on entries whose sessions were gone before it could be recorded; the
 /// name is then all there is to match on, as it is for the display layers.
 function dayProjectMatches(name: string, path: string | undefined, include: string[], exclude: string[]): boolean {
-  const n = name.toLowerCase()
-  const p = (path ?? '').toLowerCase()
-  const hit = (pattern: string): boolean => n.includes(pattern) || (p !== '' && p.includes(pattern))
+  const entry = { project: name, projectPath: path ?? '' }
+  const hit = (pattern: string): boolean => matchesProjectPattern(entry, pattern)
   if (include.length > 0 && !include.some(hit)) return false
   if (exclude.length > 0 && exclude.some(hit)) return false
   return true
@@ -532,8 +532,8 @@ export function buildDurableOverviewFromNormalizedIndex(
   opts: AggregateOpts = {},
 ): IndexedDurableOverview {
   const pf = opts.provider ?? 'all'
-  const include = (opts.project ?? []).map(value => value.toLowerCase())
-  const exclude = (opts.exclude ?? []).map(value => value.toLowerCase())
+  const include = opts.project ?? []
+  const exclude = opts.exclude ?? []
   const hasProjectFilter = include.length > 0 || exclude.length > 0
   const filteredProjects = filterProjectsByName(normalizedProjects, opts.project ?? [], opts.exclude ?? [])
   const scanProjects = filterProjectsByDateRange(filteredProjects, periodInfo.range)
@@ -704,8 +704,8 @@ export async function buildDurablePeriod(periodInfo: PeriodInfo, opts: Aggregate
   // name-filtered above (`fp`), but the historical remainder comes straight out
   // of the day cache, so without this slice a --project/--exclude headline
   // counted every expired-source day whole while the detail panels did not.
-  const projectInclude = (opts.project ?? []).map(s => s.toLowerCase())
-  const projectExclude = (opts.exclude ?? []).map(s => s.toLowerCase())
+  const projectInclude = opts.project ?? []
+  const projectExclude = opts.exclude ?? []
   const hasProjectFilter = projectInclude.length > 0 || projectExclude.length > 0
   // What a filtered total cannot claim, and therefore has to leave out: a cached
   // day with no project split at all, or — with a provider filter also active,

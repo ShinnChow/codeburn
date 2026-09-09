@@ -52,6 +52,58 @@ describe('filterProjectsByName', () => {
     expect(result.map(p => p.project).sort()).toEqual(['AgentSeal', 'dashboard'])
   })
 
+  it('an absolute-path pattern does not swallow a sibling sharing its prefix', () => {
+    const siblings = [
+      makeProject('my-company', '/Users/alice/work/my-company'),
+      makeProject('my-company-kit', '/Users/alice/work/my-company-kit'),
+      makeProject('client', '/Users/alice/work/my-company/packages/client'),
+    ]
+    const result = filterProjectsByName(siblings, undefined, ['/Users/alice/work/my-company'])
+    expect(result.map(p => p.project)).toEqual(['my-company-kit'])
+  })
+
+  it('anchors an absolute-path include the same way', () => {
+    const siblings = [
+      makeProject('my-company', '/Users/alice/work/my-company'),
+      makeProject('my-company-kit', '/Users/alice/work/my-company-kit'),
+    ]
+    expect(filterProjectsByName(siblings, ['/Users/alice/work/my-company']).map(p => p.project)).toEqual(['my-company'])
+  })
+
+  it('keeps a plain word loose, so it still spans siblings and worktrees', () => {
+    const siblings = [
+      makeProject('my-company', '/Users/alice/work/my-company'),
+      makeProject('my-company-kit', '/Users/alice/work/my-company-kit'),
+      makeProject('other', '/Users/alice/work/other'),
+    ]
+    expect(filterProjectsByName(siblings, ['my-company']).map(p => p.project)).toEqual(['my-company', 'my-company-kit'])
+  })
+
+  it('is trailing-slash and backslash tolerant on an absolute pattern', () => {
+    const win = [makeProject('app', 'C:\\Users\\alice\\app'), makeProject('app-two', 'C:\\Users\\alice\\app-two')]
+    expect(filterProjectsByName(win, undefined, ['C:/Users/alice/app/']).map(p => p.project)).toEqual(['app-two'])
+  })
+
+  it('folds case on an identified Windows pattern and keeps POSIX case identity', () => {
+    const posix = [makeProject('Vault', '/a/Vault'), makeProject('vault', '/a/vault')]
+    expect(filterProjectsByName(posix, ['/a/Vault']).map(p => p.project)).toEqual(['Vault'])
+    const win = [makeProject('vault', 'C:\\Work\\Vault')]
+    expect(filterProjectsByName(win, ['c:/work/vault']).map(p => p.project)).toEqual(['vault'])
+    const unc = [makeProject('vault', '\\\\Server\\Share\\Vault')]
+    expect(filterProjectsByName(unc, ['//server/share']).map(p => p.project)).toEqual(['vault'])
+  })
+
+  it('anchors a POSIX pattern against a Codex-style stripped absolute path', () => {
+    const codex = [makeProject('vault', 'root/vault'), makeProject('vault-ui', 'root/vault-ui')]
+    expect(filterProjectsByName(codex, undefined, ['/root/vault']).map(p => p.project)).toEqual(['vault-ui'])
+  })
+
+  it('names no project for a rooted pattern that keys to nothing', () => {
+    expect(filterProjectsByName(projects, ['/'])).toEqual([])
+    expect(filterProjectsByName(projects, undefined, ['/'])).toEqual(projects)
+    expect(filterProjectsByName(projects, undefined, ['//'])).toEqual(projects)
+  })
+
   it('exclude matches path substring', () => {
     const result = filterProjectsByName(projects, undefined, ['/tmp'])
     expect(result.map(p => p.project)).not.toContain('sandbox')
