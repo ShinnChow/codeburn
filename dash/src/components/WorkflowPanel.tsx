@@ -94,8 +94,11 @@ export function WorkflowPanel({ current }: { current: Current }) {
         <div className="border-t border-border pt-3">
           <div className="mb-2 text-[11px] font-medium uppercase tracking-wider text-tertiary-foreground">Most reworked</div>
           <div className="flex flex-col gap-1.5">
-            {reworked.slice(0, 8).map((f) => (
-              <div key={f.path} className="flex items-baseline justify-between gap-3">
+            {reworked.slice(0, 8).map((f, i) => (
+              // Ranked summary rows are stateless. The payload only has basename
+              // `path`, which can repeat across projects, so path+index is unique
+              // without inventing an id or merging counts.
+              <div key={`${f.path}:${i}`} className="flex items-baseline justify-between gap-3">
                 <span className="truncate font-mono text-[12.5px] text-foreground" title={f.path}>
                   {f.path}
                 </span>
