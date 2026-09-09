@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: star-history
@@ -19,11 +20,58 @@ jobs:
       - uses: actions/checkout@v6
 
       # Pin the action to an immutable revision because this workflow grants
-      # write access to the repository.
-      - uses: narayann7/star-history-action@a68d8f9d67ca20d55b682a264e69152dcf326e9c
+      # write access to the repository. commit: false keeps generation here;
+      # publishing goes through a persistent PR so main's pull-request rule
+      # (GH013) is preserved.
+      - id: charts
+        uses: narayann7/star-history-action@a68d8f9d67ca20d55b682a264e69152dcf326e9c
         with:
           repos: getagentseal/codeburn
           output-dir: assets/star-history
           type: Date
           themes: light,dark
           width: "960"
+          commit: "false"
+
+      - name: Open or update star-history PR
+        if: steps.charts.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: chore/star-history
+          BASE: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add assets/star-history README.md
+          if git diff --cached --quiet; then
+            echo "Generator reported a change, but the worktree matches HEAD; nothing to publish."
+            exit 0
+          fi
+
+          git switch -C "$BRANCH"
+          git commit -m "chore: update star history"
+
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; then
+            git fetch origin "$BRANCH"
+            git push --force-with-lease origin "HEAD:refs/heads/${BRANCH}"
+          else
+            git push -u origin "HEAD:refs/heads/${BRANCH}"
+          fi
+
+          if [ "$(gh pr view "$BRANCH" --json state --jq '.state' 2>/dev/null || true)" = "OPEN" ]; then
+            echo "Updated existing pull request for ${BRANCH}."
+            exit 0
+          fi
+
+          body=$(cat <<'EOF'
+          Refresh the README star-history charts from the scheduled generator.
+
+          Main requires pull requests, so this workflow publishes through this persistent branch instead of pushing to main.
+
+          Authored by github-actions[bot]. A later run that sees a chart change updates this same PR; a no-change run is a no-op.
+          EOF
+          )
+          gh pr create --head "$BRANCH" --base "$BASE" --title "chore: update star history" --body "$body"
