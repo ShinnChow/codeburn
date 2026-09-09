@@ -569,7 +569,7 @@ export function App() {
   return (
     <div className="min-h-screen bg-outer-background p-2.5 max-md:min-h-[100dvh]">
       <div className="flex h-[calc(100vh-20px)] flex-col gap-2.5 max-md:h-[calc(100dvh-20px)]">
-        <header className="flex h-12 shrink-0 items-center gap-4 rounded-md border border-border bg-card px-5 shadow-[0_2px_8px_rgba(0,0,0,0.03)] dark:shadow-[0_2px_8px_rgba(0,0,0,0.5)] max-md:gap-3 max-md:px-3">
+        <header className="flex h-12 shrink-0 items-center gap-4 rounded-md border border-border bg-card px-5 shadow-[0_2px_8px_rgba(0,0,0,0.03)] dark:shadow-[0_2px_8px_rgba(0,0,0,0.5)] max-md:h-auto max-md:flex-wrap max-md:gap-3 max-md:px-3 max-md:py-2">
           <button
             type="button"
             onClick={() => setSidebarOpen(true)}
@@ -606,8 +606,8 @@ export function App() {
             ))}
           </div>
 
-          {/* min-w-0 + overflow-x-auto at all widths: max-md alone left md–lg (e.g. 900px) overflowing the document. */}
-          <div className="ml-auto flex min-w-0 items-center gap-2 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {/* All widths: min-w-0 + overflow-x-auto contain mid-width overflow. Below md: full-width second row so ~390px isn't a ~22px clip. */}
+          <div className="ml-auto flex min-w-0 items-center gap-2 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden max-md:ml-0 max-md:w-full max-md:basis-full">
             {page === 'usage' && (
             <>
             <div className="flex shrink-0 rounded-md border border-border bg-interactive-secondary p-0.5">
