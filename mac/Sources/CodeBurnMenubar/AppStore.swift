@@ -166,8 +166,9 @@ final class AppStore {
     var copilotError: String?
     // Same file-based activation as Kimi/Gemini — reading
     // Copilot discovery never raises a keychain prompt, so we start dormant and
-    // auto-activate on the first refresh tick.
-    var copilotLoadState: SubscriptionLoadState = CopilotSubscriptionService.hasCredential ? .dormant : .notBootstrapped
+    // auto-activate on the first refresh tick unless the user explicitly
+    // disconnected. That opt-out is persisted and applied in `init`.
+    var copilotLoadState: SubscriptionLoadState = .notBootstrapped
 
     var antigravityUsage: AntigravityUsage?
     var antigravityError: String?
@@ -201,6 +202,19 @@ final class AppStore {
         (CapacityDockProvider) -> Void = {
             CapacityDockPreferences.removeProvider($0)
         }
+    @ObservationIgnored var copilotQuotaRuntime: CopilotQuotaRuntime
+
+    init(copilotQuotaRuntime: CopilotQuotaRuntime = .live) {
+        self.copilotQuotaRuntime = copilotQuotaRuntime
+        copilotLoadState = Self.initialCopilotLoadState(runtime: copilotQuotaRuntime)
+    }
+
+    private static func initialCopilotLoadState(runtime: CopilotQuotaRuntime) -> SubscriptionLoadState {
+        if CopilotExplicitDisconnect.isSet(defaults: runtime.defaults) {
+            return .notBootstrapped
+        }
+        return runtime.hasCredential() ? .dormant : .notBootstrapped
+    }
 
     /// Generation tokens for the in-flight refresh tasks. Incremented on every
     /// disconnect / reset so a fetch that started before the disconnect cannot
@@ -1708,25 +1722,41 @@ final class AppStore {
 
     /// Same prompt-free activation as Kimi/Gemini: the whole Copilot discovery
     /// chain is prompt-free, so the first refresh tick activates dormant state.
+    /// Automatic cadence must not clear an explicit disconnect; that happens
+    /// only in `connectCopilot`.
     func bootstrapCopilot() async {
+        if CopilotExplicitDisconnect.isSet(defaults: copilotQuotaRuntime.defaults) {
+            copilotLoadState = .notBootstrapped
+            return
+        }
         // Capture the generation before the await so a disconnect that lands
         // mid-fetch cannot be resurrected into .loaded when the fetch returns.
         let gen = copilotRefreshGen
         copilotLoadState = .bootstrapping
         do {
-            let usage = try await CopilotSubscriptionService.refresh()
+            let usage = try await copilotQuotaRuntime.refresh()
             guard gen == copilotRefreshGen else { return }
+            if CopilotExplicitDisconnect.isSet(defaults: copilotQuotaRuntime.defaults) { return }
             copilotUsage = usage
             copilotError = nil
             copilotLoadState = .loaded
         } catch let err as CopilotSubscriptionService.FetchError {
             guard gen == copilotRefreshGen else { return }
+            if CopilotExplicitDisconnect.isSet(defaults: copilotQuotaRuntime.defaults) { return }
             applyCopilotFetchError(err)
         } catch {
             guard gen == copilotRefreshGen else { return }
+            if CopilotExplicitDisconnect.isSet(defaults: copilotQuotaRuntime.defaults) { return }
             copilotError = sanitizeForUI(error.localizedDescription)
             copilotLoadState = .failed
         }
+    }
+
+    /// User-initiated Connect / Reconnect / Load Quota. Clears persisted
+    /// explicit disconnect so discovery may run again.
+    func connectCopilot() async {
+        CopilotExplicitDisconnect.clear(defaults: copilotQuotaRuntime.defaults)
+        await bootstrapCopilot()
     }
 
     func refreshCopilot() async {
@@ -1735,29 +1765,36 @@ final class AppStore {
 
     @discardableResult
     func refreshCopilotReportingSuccess() async -> Bool {
+        if CopilotExplicitDisconnect.isSet(defaults: copilotQuotaRuntime.defaults) {
+            if copilotLoadState != .notBootstrapped { copilotLoadState = .notBootstrapped }
+            return false
+        }
         if case .dormant = copilotLoadState {
             await bootstrapCopilot()
             return copilotLoadState == .loaded
         }
-        guard CopilotSubscriptionService.hasCredential else {
+        guard copilotQuotaRuntime.hasCredential() else {
             if copilotLoadState != .notBootstrapped { copilotLoadState = .notBootstrapped }
             return false
         }
         let gen = copilotRefreshGen
         if copilotUsage == nil { copilotLoadState = .loading }
         do {
-            let usage = try await CopilotSubscriptionService.refresh()
+            let usage = try await copilotQuotaRuntime.refresh()
             guard gen == copilotRefreshGen else { return false }
+            if CopilotExplicitDisconnect.isSet(defaults: copilotQuotaRuntime.defaults) { return false }
             copilotUsage = usage
             copilotError = nil
             copilotLoadState = .loaded
             return true
         } catch let err as CopilotSubscriptionService.FetchError {
             guard gen == copilotRefreshGen else { return false }
+            if CopilotExplicitDisconnect.isSet(defaults: copilotQuotaRuntime.defaults) { return false }
             applyCopilotFetchError(err)
             return false
         } catch {
             guard gen == copilotRefreshGen else { return false }
+            if CopilotExplicitDisconnect.isSet(defaults: copilotQuotaRuntime.defaults) { return false }
             copilotError = sanitizeForUI(error.localizedDescription)
             copilotLoadState = .failed
             return false
@@ -1765,7 +1802,8 @@ final class AppStore {
     }
 
     func disconnectCopilot() {
-        CopilotSubscriptionService.disconnect()
+        copilotQuotaRuntime.disconnectService()
+        CopilotExplicitDisconnect.mark(defaults: copilotQuotaRuntime.defaults)
         copilotRefreshGen &+= 1
         copilotUsage = nil
         copilotError = nil
@@ -2217,7 +2255,7 @@ final class AppStore {
         case .codex: await bootstrapCodex()
         case .kimiCode: await bootstrapKimi()
         case .gemini: await bootstrapGemini()
-        case .copilot: await bootstrapCopilot()
+        case .copilot: await connectCopilot()
         case .antigravity: await bootstrapAntigravity()
         default: break
         }

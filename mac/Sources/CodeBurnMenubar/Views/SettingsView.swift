@@ -1428,7 +1428,7 @@ private struct CopilotTokenSection: View {
                 )
                 token = ""
                 CopilotSubscriptionService.resetProbeCache()
-                await store.bootstrapCopilot()
+                await store.connectCopilot()
             } catch {
                 errorText = error.localizedDescription
             }
@@ -1529,13 +1529,13 @@ private struct CopilotConnectionRow: View {
                     Text("CodeBurn will stop tracking Copilot quota. Every credential it read stays untouched, and your Copilot clients keep working.")
                 }
         case .terminalFailure, .noCredentials, .failed:
-            Button("Reconnect") { Task { await store.bootstrapCopilot() } }
+            Button("Reconnect") { Task { await store.connectCopilot() } }
                 .buttonStyle(.borderedProminent)
         case .dormant:
-            Button("Load Quota") { Task { await store.bootstrapCopilot() } }
+            Button("Load Quota") { Task { await store.connectCopilot() } }
                 .buttonStyle(.borderedProminent)
         case .notBootstrapped:
-            Button("Connect") { Task { await store.bootstrapCopilot() } }
+            Button("Connect") { Task { await store.connectCopilot() } }
                 .buttonStyle(.borderedProminent)
         case .bootstrapping:
             ProgressView().controlSize(.small)

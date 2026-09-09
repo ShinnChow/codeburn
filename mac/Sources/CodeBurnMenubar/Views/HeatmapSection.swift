@@ -2470,7 +2470,7 @@ private struct CopilotPlanInsight: View {
                 PlanNoCredentialsView(
                     title: "No Copilot credentials found",
                     message: "Sign in via an editor's Copilot plugin first. Then click Try Again."
-                ) { Task { await store.bootstrapCopilot() } }
+                ) { Task { await store.connectCopilot() } }
             case .loading:
                 PlanLoadingView(message: "Reading Copilot credentials...")
             case .failed:
@@ -2486,7 +2486,7 @@ private struct CopilotPlanInsight: View {
                     title: "Refresh Copilot login",
                     reason: reason,
                     fallback: "Your Copilot sign-in has expired. Sign in via an editor's Copilot plugin again, then click Reconnect."
-                ) { Task { await store.bootstrapCopilot() } }
+                ) { Task { await store.connectCopilot() } }
             case let .usage(idle):
                 if let usage = store.copilotUsage {
                     loadedBody(usage: usage, idle: idle)
