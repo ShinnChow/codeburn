@@ -11,9 +11,9 @@ import Foundation
 /// genuinely nothing to show.
 ///
 /// Explicit Disconnect is different from missing credentials: the store keeps
-/// `.notBootstrapped` while credentials stay on disk. Plan and Settings copy
-/// therefore take the persisted opt-out flag and must not claim the token is
-/// gone.
+/// `.notBootstrapped` while credentials stay on disk. Plan, Settings, and
+/// Capacity Dock nil-quota copy therefore take the persisted opt-out flag and
+/// must not claim the token is gone.
 enum CopilotQuotaPresentation {
     /// Which Plan-tab subview to render, given the load state and whether a
     /// last-known snapshot exists.

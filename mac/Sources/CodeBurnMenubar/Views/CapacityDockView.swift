@@ -695,7 +695,12 @@ struct CapacityDockDetailView: View {
         } else {
             VStack(alignment: .leading, spacing: 11 * model.detailScale) {
                 header(provider, plan: nil)
-                Text(ProviderConnectionGuidance.dockInstruction(for: provider))
+                Text(
+                    provider == .copilot
+                        && CopilotExplicitDisconnect.isSet(defaults: store.copilotQuotaRuntime.defaults)
+                        ? CopilotQuotaPresentation.disconnectedSettingsDetail
+                        : ProviderConnectionGuidance.dockInstruction(for: provider)
+                )
                     .font(.system(size: 12))
                     .foregroundStyle(Color.capacityDockText.opacity(0.62))
                     .fixedSize(horizontal: false, vertical: true)
