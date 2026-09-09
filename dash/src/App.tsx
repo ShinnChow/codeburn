@@ -582,7 +582,7 @@ export function App() {
               <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11" />
             </svg>
           </button>
-          <div className="flex items-center gap-2 max-md:shrink-0">
+          <div className="flex shrink-0 items-center gap-2">
             <img src="/codeburn-logo.png" alt="CodeBurn" className="h-6 w-6" />
             <span className="text-lg font-semibold tracking-[-0.02em] text-foreground">
               Code<span className="text-brand">Burn</span>
@@ -590,14 +590,14 @@ export function App() {
             <span className="ml-1 text-[11px] font-light uppercase tracking-[0.14em] text-tertiary-foreground max-sm:hidden">usage</span>
           </div>
 
-          <div className="ml-6 flex rounded-md border border-border bg-interactive-secondary p-0.5 max-md:ml-2 max-md:shrink-0">
+          <div className="ml-6 flex shrink-0 rounded-md border border-border bg-interactive-secondary p-0.5 max-md:ml-2">
             {(['usage', 'context'] as const).map((pg) => (
               <button
                 key={pg}
                 type="button"
                 onClick={() => setPage(pg)}
                 className={cn(
-                  'rounded-[5px] px-3 py-1 text-xs font-medium transition-colors',
+                  'rounded-[5px] px-3 py-1 text-xs font-medium whitespace-nowrap transition-colors',
                   page === pg ? 'bg-active-primary text-foreground shadow-sm' : 'text-tertiary-foreground hover:text-foreground',
                 )}
               >
@@ -606,17 +606,18 @@ export function App() {
             ))}
           </div>
 
-          <div className="ml-auto flex items-center gap-2 max-md:min-w-0 max-md:overflow-x-auto max-md:[-ms-overflow-style:none] max-md:[scrollbar-width:none] max-md:[&::-webkit-scrollbar]:hidden">
+          {/* min-w-0 + overflow-x-auto at all widths: max-md alone left md–lg (e.g. 900px) overflowing the document. */}
+          <div className="ml-auto flex min-w-0 items-center gap-2 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {page === 'usage' && (
             <>
-            <div className="flex rounded-md border border-border bg-interactive-secondary p-0.5 max-md:shrink-0">
+            <div className="flex shrink-0 rounded-md border border-border bg-interactive-secondary p-0.5">
               {PERIODS.map((p) => (
                 <button
                   key={p.key}
                   type="button"
                   onClick={() => { autoPeriod.current = false; setPeriod(p.key) }}
                   className={cn(
-                    'rounded-[5px] px-3 py-1 text-xs font-medium transition-colors max-md:inline-flex max-md:min-h-9 max-md:items-center max-md:justify-center',
+                    'rounded-[5px] px-3 py-1 text-xs font-medium whitespace-nowrap transition-colors max-md:inline-flex max-md:min-h-9 max-md:items-center max-md:justify-center',
                     period === p.key ? 'bg-active-primary text-foreground shadow-sm' : 'text-tertiary-foreground hover:text-foreground',
                   )}
                 >
@@ -624,14 +625,14 @@ export function App() {
                 </button>
               ))}
             </div>
-            <div className="flex rounded-md border border-border bg-interactive-secondary p-0.5 max-md:shrink-0">
+            <div className="flex shrink-0 rounded-md border border-border bg-interactive-secondary p-0.5">
               {(['cost', 'tokens'] as Unit[]).map((u) => (
                 <button
                   key={u}
                   type="button"
                   onClick={() => setUnit(u)}
                   className={cn(
-                    'rounded-[5px] px-3 py-1 text-xs font-medium transition-colors max-md:inline-flex max-md:min-h-9 max-md:items-center max-md:justify-center',
+                    'rounded-[5px] px-3 py-1 text-xs font-medium whitespace-nowrap transition-colors max-md:inline-flex max-md:min-h-9 max-md:items-center max-md:justify-center',
                     unit === u ? 'bg-active-primary text-foreground shadow-sm' : 'text-tertiary-foreground hover:text-foreground',
                   )}
                 >
@@ -642,7 +643,7 @@ export function App() {
             <select
               value={provider}
               onChange={(e) => setProvider(e.target.value)}
-              className="rounded-md border border-border bg-card px-3 py-1.5 text-xs text-foreground outline-none max-md:min-h-9 max-md:shrink-0"
+              className="shrink-0 rounded-md border border-border bg-card px-3 py-1.5 text-xs text-foreground outline-none max-md:min-h-9"
             >
               <option value="all">All tools</option>
               {providerOptions.map((p) => (
