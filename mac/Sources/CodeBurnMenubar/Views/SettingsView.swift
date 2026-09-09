@@ -1506,8 +1506,12 @@ private struct CopilotConnectionRow: View {
         case .bootstrapping: return "Looking for a GitHub token on this Mac."
         case .loading: return "Background refresh in progress."
         case .dormant: return "Tap Load Quota to fetch live usage from api.github.com."
-        case .notBootstrapped, .noCredentials:
-            return "Usage tracking still works. For live quota, sign in with the Copilot CLI or gh auth login, or paste a token below, then click Connect."
+        case .notBootstrapped:
+            return CopilotQuotaPresentation.settingsNotConnectedDetail(
+                explicitlyDisconnected: CopilotExplicitDisconnect.isSet(defaults: store.copilotQuotaRuntime.defaults)
+            )
+        case .noCredentials:
+            return CopilotQuotaPresentation.noCredentialsSettingsDetail
         case .failed: return store.copilotError ?? ""
         }
     }

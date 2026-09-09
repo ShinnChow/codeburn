@@ -2465,11 +2465,20 @@ private struct CopilotPlanInsight: View {
 
     var body: some View {
         Group {
-            switch CopilotQuotaPresentation.planContent(loadState: store.copilotLoadState, hasUsage: store.copilotUsage != nil) {
+            switch CopilotQuotaPresentation.planContent(
+                loadState: store.copilotLoadState,
+                hasUsage: store.copilotUsage != nil,
+                explicitlyDisconnected: CopilotExplicitDisconnect.isSet(defaults: store.copilotQuotaRuntime.defaults)
+            ) {
             case .noCredentials:
                 PlanNoCredentialsView(
-                    title: "No Copilot credentials found",
-                    message: "Sign in via an editor's Copilot plugin first. Then click Try Again."
+                    title: CopilotQuotaPresentation.noCredentialsPlanTitle,
+                    message: CopilotQuotaPresentation.noCredentialsPlanMessage
+                ) { Task { await store.connectCopilot() } }
+            case .disconnected:
+                PlanConnectView(
+                    title: CopilotQuotaPresentation.disconnectedPlanTitle,
+                    message: CopilotQuotaPresentation.disconnectedPlanMessage
                 ) { Task { await store.connectCopilot() } }
             case .loading:
                 PlanLoadingView(message: "Reading Copilot credentials...")
