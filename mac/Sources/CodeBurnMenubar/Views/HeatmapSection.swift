@@ -2465,12 +2465,21 @@ private struct CopilotPlanInsight: View {
 
     var body: some View {
         Group {
-            switch CopilotQuotaPresentation.planContent(loadState: store.copilotLoadState, hasUsage: store.copilotUsage != nil) {
+            switch CopilotQuotaPresentation.planContent(
+                loadState: store.copilotLoadState,
+                hasUsage: store.copilotUsage != nil,
+                explicitlyDisconnected: CopilotExplicitDisconnect.isSet(defaults: store.copilotQuotaRuntime.defaults)
+            ) {
             case .noCredentials:
                 PlanNoCredentialsView(
-                    title: "No Copilot credentials found",
-                    message: "Sign in via an editor's Copilot plugin first. Then click Try Again."
-                ) { Task { await store.bootstrapCopilot() } }
+                    title: CopilotQuotaPresentation.noCredentialsPlanTitle,
+                    message: CopilotQuotaPresentation.noCredentialsPlanMessage
+                ) { Task { await store.connectCopilot() } }
+            case .disconnected:
+                PlanConnectView(
+                    title: CopilotQuotaPresentation.disconnectedPlanTitle,
+                    message: CopilotQuotaPresentation.disconnectedPlanMessage
+                ) { Task { await store.connectCopilot() } }
             case .loading:
                 PlanLoadingView(message: "Reading Copilot credentials...")
             case .failed:
@@ -2486,7 +2495,7 @@ private struct CopilotPlanInsight: View {
                     title: "Refresh Copilot login",
                     reason: reason,
                     fallback: "Your Copilot sign-in has expired. Sign in via an editor's Copilot plugin again, then click Reconnect."
-                ) { Task { await store.bootstrapCopilot() } }
+                ) { Task { await store.connectCopilot() } }
             case let .usage(idle):
                 if let usage = store.copilotUsage {
                     loadedBody(usage: usage, idle: idle)
