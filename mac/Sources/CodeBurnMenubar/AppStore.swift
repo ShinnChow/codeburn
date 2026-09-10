@@ -1736,17 +1736,14 @@ final class AppStore {
         do {
             let usage = try await copilotQuotaRuntime.refresh()
             guard gen == copilotRefreshGen else { return }
-            if CopilotExplicitDisconnect.isSet(defaults: copilotQuotaRuntime.defaults) { return }
             copilotUsage = usage
             copilotError = nil
             copilotLoadState = .loaded
         } catch let err as CopilotSubscriptionService.FetchError {
             guard gen == copilotRefreshGen else { return }
-            if CopilotExplicitDisconnect.isSet(defaults: copilotQuotaRuntime.defaults) { return }
             applyCopilotFetchError(err)
         } catch {
             guard gen == copilotRefreshGen else { return }
-            if CopilotExplicitDisconnect.isSet(defaults: copilotQuotaRuntime.defaults) { return }
             copilotError = sanitizeForUI(error.localizedDescription)
             copilotLoadState = .failed
         }
@@ -1782,19 +1779,16 @@ final class AppStore {
         do {
             let usage = try await copilotQuotaRuntime.refresh()
             guard gen == copilotRefreshGen else { return false }
-            if CopilotExplicitDisconnect.isSet(defaults: copilotQuotaRuntime.defaults) { return false }
             copilotUsage = usage
             copilotError = nil
             copilotLoadState = .loaded
             return true
         } catch let err as CopilotSubscriptionService.FetchError {
             guard gen == copilotRefreshGen else { return false }
-            if CopilotExplicitDisconnect.isSet(defaults: copilotQuotaRuntime.defaults) { return false }
             applyCopilotFetchError(err)
             return false
         } catch {
             guard gen == copilotRefreshGen else { return false }
-            if CopilotExplicitDisconnect.isSet(defaults: copilotQuotaRuntime.defaults) { return false }
             copilotError = sanitizeForUI(error.localizedDescription)
             copilotLoadState = .failed
             return false
