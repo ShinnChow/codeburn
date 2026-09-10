@@ -1216,8 +1216,8 @@ private struct StatsInsight: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 VStack(alignment: .leading, spacing: 8) {
-                    StatRow(label: "Sessions today", value: SessionCountLabel.text(sessions: payload.current.sessions, basis: payload.current.sessionCountBasis))
-                    StatRow(label: "Calls today", value: payload.current.calls.asThousandsSeparated())
+                    StatRow(label: "Sessions", value: SessionCountLabel.text(sessions: payload.current.sessions, basis: payload.current.sessionCountBasis))
+                    StatRow(label: "Calls", value: payload.current.calls.asThousandsSeparated())
                     StatRow(label: "Current streak", value: stats.currentStreak)
                     StatRow(label: "Longest streak", value: stats.longestStreak)
                 }
