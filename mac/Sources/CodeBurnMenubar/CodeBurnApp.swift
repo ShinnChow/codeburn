@@ -3,6 +3,7 @@ import SwiftUI
 import AppKit
 import Observation
 import ServiceManagement
+import UserNotifications
 
 private let refreshIntervalSeconds: UInt64 = 30
 private let forceRefreshWatchdogSeconds: TimeInterval = 90
@@ -165,7 +166,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
         registerLoginItemIfNeeded()
         observeSubscriptionDisconnect()
         observeCapacityDockProviderSettingsRequests()
+        setupUpdateNotifications()
         Task { await updateChecker.checkIfNeeded() }
+    }
+
+    /// Delegate only: authorization is requested lazily by UpdateChecker the
+    /// first time a notification would actually be posted.
+    private func setupUpdateNotifications() {
+        guard Bundle.main.bundleIdentifier != nil else { return }
+        UNUserNotificationCenter.current().delegate = self
     }
 
     private func observeCapacityDockProviderSettingsRequests() {
@@ -1665,5 +1674,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
         // Catch up on any menubar title updates that were skipped while the
         // popover was anchored.
         refreshStatusButton()
+    }
+}
+
+extension AppDelegate: UNUserNotificationCenterDelegate {
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner]
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        await MainActor.run { self.updateChecker.performFullUpdate() }
     }
 }
