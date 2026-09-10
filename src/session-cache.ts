@@ -385,7 +385,18 @@ export const PROVIDER_PARSE_VERSIONS: Record<string, string> = {
   // sessions' workspaceDirectory), which sync attribution needs to resolve
   // the git repo. Cached entries from before the bump lack projectPath and
   // would serve attribution-blind sessions forever without a re-parse.
-  kiro: 'ide-parsing-v1-est-cost-project-path-v1',
+  // working-directory-v1: project-path-v1 wired the session's directory to
+  // projectPath only, but sync attribution does not read that field. It calls
+  // buildRepoGroups in "trusted-session-cwd" mode, which resolves the repo from
+  // `session.workingDirectory` and drops any session whose own directory does
+  // not resolve — so every kiro session stayed attribution-blind despite
+  // carrying the path. All three parsers now emit workingDirectory from the
+  // same provider-recorded value; parser.ts stamps
+  // workingDirectoryProvenance: 'provider-field' on it, which is what the
+  // consumer requires (a marker-less value is treated as synthesized and fails
+  // closed). Entries cached under project-path-v1 hold projectPath but no
+  // workingDirectory, so a re-parse is required for the fix to take effect.
+  kiro: 'ide-parsing-v1-est-cost-project-path-v1-working-directory-v1',
   // nested-agent-v1: OMP writes crewmate transcripts one directory below each
   // parent session. reported-cost-v2 persists those measured costs through the
   // cache, including the explicit zero on xai-oauth turns.
