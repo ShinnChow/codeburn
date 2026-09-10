@@ -510,11 +510,7 @@ function parseCliSession(meta: KiroCliSessionMeta, entries: KiroCliEntry[], seen
       userMessage: pendingUserMessage,
       sessionId,
       project,
-      // Both fields, from the same provider-recorded value: projectPath drives
-      // display/grouping, while workingDirectory is what sync attribution reads
-      // (buildRepoGroups' "trusted-session-cwd" mode). Setting only projectPath
-      // leaves every session attribution-blind — see the note on
-      // PROVIDER_PARSE_VERSIONS.kiro.
+      // workingDirectory is what sync attribution reads; see PROVIDER_PARSE_VERSIONS.kiro.
       ...(meta.cwd ? { projectPath: meta.cwd, workingDirectory: meta.cwd } : {}),
     })
     turnIndex++
