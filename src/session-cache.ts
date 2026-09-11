@@ -369,10 +369,9 @@ export const PROVIDER_PARSE_VERSIONS: Record<string, string> = {
   // authoritative totals, use modelUsage only for priced attribution, clamp
   // reasoning per record, and label mixed sessions estimated.
   grok: 'authoritative-usage-v4',
-  // seed-aware-v1: the parser now skips the parent events a forked session
-  // replays (double-counted before), takes the model from the reporting
-  // assistant/message, and keeps agent-injected context out of the preview.
-  dsh: 'seed-aware-v1',
+  // v0-v3 generations, embedded attempt streams, retry accounting, and the
+  // version-specific inherited-prefix rules all change cached DSH calls.
+  dsh: 'session-formats-v0-v3-attempts-v4',
   // cost-provenance-v3: preserve Hermes included/estimated/actual status and
   // rebuild the provider section alongside the v3 lifetime ledger. The parse
   // bump is required with the ledger bump: seeding a new ledger from a section

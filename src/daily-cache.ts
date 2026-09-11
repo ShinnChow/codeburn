@@ -178,7 +178,10 @@ import type { DateRange, ProjectSummary } from './types.js'
 // explicit estimates retain their status, and surviving Hermes sources replace
 // v29 slices produced by the old API-equivalent fallback.
 // 31: #1234 Hermes cost contract; 30 is claimed by #1132.
-export const DAILY_CACHE_VERSION = 31
+// v32: DSH session formats v1-v3 and inclusive reasoning accounting. Re-derive
+// finalized DSH days so migrated generations and retry attempts replace the
+// v0-only totals, and reasoning detail is not added on top of full output.
+export const DAILY_CACHE_VERSION = 32
 const MIN_SUPPORTED_VERSION = 28
 
 /// Providers whose per-day CALL COUNT means something different at
@@ -206,6 +209,9 @@ const PENDING_REDERIVE_PROVIDER_VERSIONS: Readonly<Record<string, number>> = {
   // Tracks DAILY_CACHE_VERSION: a v30 file may have been written by #1132's
   // accounting, which never carried the Hermes cost contract.
   hermes: 31,
+  // DSH v0-only parsing and exclusive-reasoning display were both stale in
+  // finalized days written before the multi-generation reader.
+  dsh: 32,
 }
 
 function providersPendingRederiveFrom(fromVersion: number): string[] {
