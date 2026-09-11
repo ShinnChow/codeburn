@@ -178,6 +178,25 @@ describe('codeburn serve --stdio', () => {
     }
   }, 60_000)
 
+  // SERVE_OPTIONS mirrors the Commander definitions: a command that declares
+  // --project/--exclude but is missing them here falls back to a cold spawn.
+  it('routes --project/--exclude for every command that declares them', async () => {
+    const commands: Array<[number, string[]]> = [
+      [330, ['status', '--format', 'json', '--period', 'today', '--project', '/nope']],
+      [331, ['overview', '--period', 'today', '--no-color', '--exclude', '/nope']],
+      [332, ['models', '--format', 'json', '--period', 'today', '--project', '/nope']],
+      [333, ['sessions', '--format', 'json', '--period', 'today', '--exclude', '/nope']],
+      [334, ['compare', '--format', 'json', '--period', 'today', '--project', '/nope']],
+      [335, ['yield', '--format', 'json', '--period', 'today', '--exclude', '/nope']],
+      [336, ['spend', '--format', 'flow-json', '--period', 'today', '--project', '/nope']],
+      [337, ['optimize', '--format', 'json', '--period', 'today', '--exclude', '/nope']],
+      [338, ['audit', '--format', 'json', '--period', 'today', '--project', '/nope']],
+    ]
+    for (const [id, args] of commands) {
+      expect(await request(id, args)).toMatchObject({ ok: true })
+    }
+  }, 60_000)
+
   it('survives a malformed request line and keeps serving', async () => {
     sendRaw('this is not json')
     const res = await request(6, ['status', '--format', 'menubar-json', '--period', 'today'])

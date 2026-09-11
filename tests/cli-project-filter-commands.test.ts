@@ -5,6 +5,8 @@ import { spawnSync } from 'node:child_process'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { DAILY_CACHE_VERSION, currentTzKey } from '../src/daily-cache.js'
+
 // Each test spawns `tsx src/cli.ts`, which re-transpiles the CLI per spawn.
 vi.setConfig({ testTimeout: 30_000 })
 
@@ -49,10 +51,52 @@ async function seedHome(): Promise<string> {
   return home
 }
 
+/** A project whose only sessions are older than today, so a today-scoped pass misses it. */
+async function seedHomeWithOlderSessions(): Promise<string> {
+  const home = await mkdtemp(join(tmpdir(), 'codeburn-project-filter-cli-'))
+  homes.push(home)
+  const dir = join(home, '.claude', 'projects', SIBLINGS[0]!.dir)
+  await mkdir(dir, { recursive: true })
+  const fiveDaysAgo = Date.now() - 5 * 24 * 60 * 60 * 1000
+  const lines = [1, 2].map(index => JSON.stringify({
+    type: 'assistant',
+    timestamp: new Date(fiveDaysAgo + index * 60_000).toISOString(),
+    sessionId: 's-old',
+    cwd: SIBLINGS[0]!.cwd,
+    message: {
+      type: 'message', role: 'assistant', model: 'claude-3-5-sonnet-20241022', id: `old-m${index}`,
+      content: [],
+      usage: { input_tokens: 90000, output_tokens: 12000, cache_creation_input_tokens: 0, cache_read_input_tokens: 300000 },
+    },
+  }))
+  await writeFile(join(dir, 's-old.jsonl'), lines.join('\n') + '\n', 'utf-8')
+  return home
+}
+
+/** A carried day the cache still bills, whose session files are long gone. */
+async function seedDayCacheOnly(): Promise<string> {
+  const home = await mkdtemp(join(tmpdir(), 'codeburn-project-filter-cli-'))
+  homes.push(home)
+  await mkdir(join(home, '.claude', 'projects'), { recursive: true })
+  await mkdir(join(home, 'cache'), { recursive: true })
+  const date = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  const projects = { app: { cost: 30, calls: 10, savingsUSD: 0, sessions: 1, path: SIBLINGS[0]!.cwd } }
+  const day = {
+    date, cost: 30, savingsUSD: 0, calls: 10, sessions: 1,
+    inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0,
+    editTurns: 1, oneShotTurns: 0, models: {}, categories: {}, providers: {}, projects, carried: true,
+  }
+  await writeFile(join(home, 'cache', `daily-cache.v${DAILY_CACHE_VERSION}.json`), JSON.stringify({
+    version: DAILY_CACHE_VERSION, savingsConfigHash: '', tzKey: currentTzKey(),
+    lastComputedDate: date, days: [day], complete: true,
+  }), 'utf-8')
+  return home
+}
+
 function runCli(args: string[], home: string) {
   return spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', ...args], {
     cwd: process.cwd(),
-    env: { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), TZ: 'UTC' },
+    env: { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), CODEBURN_CACHE_DIR: join(home, 'cache'), TZ: 'UTC' },
     encoding: 'utf-8',
     timeout: 30_000,
   })
@@ -124,6 +168,43 @@ describe('a rooted pattern that names nothing is reported', () => {
     // A plain word is a substring by design, so it is never a typo signal.
     const loose = runCli(['sessions', '--format', 'json', '--period', '30days', '--exclude', 'nothing-like-this'], home)
     expect(loose.stderr).not.toContain('no project in this period matches')
+  })
+
+  it('does not contradict a total the same command prints', async () => {
+    const home = await seedHomeWithOlderSessions()
+    // `status` builds today and then month. Judged on the today pass alone, the
+    // pattern looks unmatched while the month total beside it is that project's.
+    const result = runCli(['status', '--format', 'json', '--project', '/Users/gone/app'], home)
+
+    expect(result.status).toBe(0)
+    expect(JSON.parse(result.stdout).month.cost).toBeGreaterThan(0)
+    expect(result.stderr).toBe('')
+
+    const typo = runCli(['status', '--format', 'json', '--project', '/Users/gone/apps'], home)
+    expect(typo.stderr).toContain('no project in this period matches /Users/gone/apps')
+  })
+
+  it('stays quiet for a project only the day cache still bills', async () => {
+    const home = await seedDayCacheOnly()
+    // The sources expired, so the live parse cannot see this project; the cache
+    // can, and it is what the totals are built from. Every command has to agree.
+    const durable = runCli(['overview', '--period', '30days', '--project', SIBLINGS[0]!.cwd, '--no-color'], home)
+    expect(durable.stderr).toBe('')
+    expect(durable.stdout).toContain('30.00')
+
+    const live = runCli(['sessions', '--format', 'json', '--period', '30days', '--project', SIBLINGS[0]!.cwd], home)
+    expect(live.status).toBe(0)
+    expect(live.stderr).toBe('')
+
+    const typo = runCli(['sessions', '--format', 'json', '--period', '30days', '--project', `${SIBLINGS[0]!.cwd}s`], home)
+    expect(typo.stderr).toContain(`no project in this period matches ${SIBLINGS[0]!.cwd}s`)
+  })
+
+  it('reports a quoted ~ pattern the shell never expanded', async () => {
+    const home = await seedHome()
+    // The README tells people to quote it, and a pattern field has no shell.
+    const result = runCli(['sessions', '--format', 'json', '--period', '30days', '--project', '~/nowhere'], home)
+    expect(result.stderr).toContain('no project in this period matches ~/nowhere')
   })
 
   it('judges each pattern on its own, against the list before any filtering', async () => {

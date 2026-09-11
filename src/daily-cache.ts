@@ -4,6 +4,7 @@ import { mkdir, open, readdir, readFile, rename, stat, unlink } from 'fs/promise
 import { join } from 'path'
 
 import { getCodeburnCacheDir } from './cache-dir.js'
+import type { ProjectFilterTarget } from './parser.js'
 import type { DateRange, ProjectSummary } from './types.js'
 
 // Bumped to 27: claude-haiku-4.5 copilot store rows now price correctly (alias added) — #1093.
@@ -1459,4 +1460,26 @@ export async function ensureCacheHydrated(
     }
     return c
   })
+}
+
+/// The projects the day cache still knows about over a range, whose sources may
+/// be long expired. A --project/--exclude pattern is only reported as naming
+/// nothing once it has missed here too: the cache is what the totals are built
+/// from, so a path it carries is a path the report bills, whatever the live
+/// parse can still see. Read all-provider on purpose, like the day split itself,
+/// so a provider-scoped command does not call a path wrong because the spend
+/// sits under another tool.
+export function cachedProjectIdentities(cache: DailyCache, startStr: string, endStr: string): ProjectFilterTarget[] {
+  const identities: ProjectFilterTarget[] = []
+  for (const day of cache.days) {
+    if (day.date < startStr || day.date > endStr || !day.projects) continue
+    for (const [name, stats] of Object.entries(day.projects)) {
+      identities.push({ project: name, projectPath: stats.path ?? '' })
+    }
+  }
+  return identities
+}
+
+export async function cachedProjectIdentitiesForRange(range: DateRange): Promise<ProjectFilterTarget[]> {
+  return cachedProjectIdentities(await loadDailyCache(), toDateString(range.start), toDateString(range.end))
 }

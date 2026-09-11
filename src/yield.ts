@@ -1,6 +1,7 @@
 import { execFileSync } from 'child_process'
 import { realpathSync } from 'fs'
 import { resolve } from 'path'
+import { cachedProjectIdentitiesForRange } from './daily-cache.js'
 import { reportUnmatchedProjectPatterns } from './project-filter-warnings.js'
 import { filterProjectsByName, parseAllSessions } from './parser.js'
 import { isTrustedAbsoluteWorkingDirectory } from './path-privacy.js'
@@ -463,7 +464,7 @@ function buildRepoGroups(
 
 export async function computeYield(range: DateRange, cwd: string, provider: string = 'all', projectFilter?: string[], excludeFilter?: string[]): Promise<YieldSummary> {
   const parsed = await parseAllSessions(range, provider)
-  reportUnmatchedProjectPatterns(parsed, projectFilter, excludeFilter)
+  await reportUnmatchedProjectPatterns(parsed, projectFilter, excludeFilter, () => cachedProjectIdentitiesForRange(range))
   const projects = filterProjectsByName(parsed, projectFilter, excludeFilter)
 
   const summary: YieldSummary = {

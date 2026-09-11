@@ -3,10 +3,9 @@ import { CATEGORY_LABELS, type ProjectSummary, type SessionSummary, type TaskCat
 import { isBehavioralCall } from './behavioral-weight.js'
 import { type PeriodData, type ProviderCost, type BreakdownArrays, type MenubarPayload, type ClaudeConfigSelector, type HydrationState, buildMenubarPayload } from './menubar-json.js'
 import { type SessionCountBasis } from './session-count-label.js'
-import { reportUnmatchedProjectPatterns } from './project-filter-warnings.js'
-
-type ProjectFilter = (entry: ProjectFilterTarget) => boolean
 import { parseAllSessions, filterProjectsByName, filterProjectsByDays, filterProjectsByClaudeConfigSource, filterProjectsByDateRange, isSessionHydrationComplete, makeProjectFilter, type ProjectFilterTarget, sessionHydrationSnapshot } from './parser.js'
+type ProjectFilter = (entry: ProjectFilterTarget) => boolean
+
 import { findUnpricedModels, getFlatRateModelsConfigHash, getLocalModelSavingsConfigHash, getPriceOverridesConfigHash, getShortModelName, isExpectedFreeModel } from './models.js'
 import { getAllProviders, safeDiscoverSessions } from './providers/index.js'
 import { loadPlugins, pluginPayloadSections } from './plugins/loader.js'
@@ -21,7 +20,7 @@ import { scanUserCorrections, medianTimeToFirstEditMs, aggregateFileChurn, compu
 import { buildPrAttribution, aggregateByBranch } from './sessions-report.js'
 import { scanAndDetect } from './optimize.js'
 import { callBillableOutputTokens, sessionBillableOutputTokens, inferSessionProvider } from './session-output.js'
-import { getDaysInRange, ensureCacheHydrated, loadDailyCache, emptyCache, mergeDayEntries, BACKFILL_DAYS, toDateString, type DailyCache, type DailyEntry, type ProjectDayStats, type ProviderDaySlice } from './daily-cache.js'
+import { getDaysInRange, ensureCacheHydrated, loadDailyCache, cachedProjectIdentities, emptyCache, mergeDayEntries, BACKFILL_DAYS, toDateString, type DailyCache, type DailyEntry, type ProjectDayStats, type ProviderDaySlice } from './daily-cache.js'
 import { buildGranularHistory } from './granular-history.js'
 import { spendProjectIdentity } from './spend-flow.js'
 
@@ -604,6 +603,12 @@ export type DurablePeriod = {
   /// The exact provider-sliced, day-filtered day set behind `data`. Daily rows
   /// rendered by report/overview come from here so they reconcile to `data`.
   days: DailyEntry[]
+  /// Every project identity this period could have matched, filter not applied:
+  /// the live parse plus the carried days, whose sources are long gone. The
+  /// command layer resolves --project/--exclude against it, once, after the last
+  /// period it builds. Reporting from here instead judged `status` on its narrow
+  /// `today` pass and contradicted its own monthly total.
+  knownProjects: ProjectFilterTarget[]
   /// Sum of `cost` on `carried` days included in the period (footnote source).
   carriedCostUSD: number
   /// Cost the active --project/--exclude filter had to set aside: cached days
@@ -622,17 +627,6 @@ export type DurablePeriod = {
   todayAllDays: DailyEntry[]
   /// The scan range the live parse covered (today-only when the period is today).
   scanRange: DateRange
-}
-
-function cachedProjectIdentities(cache: DailyCache, startStr: string, endStr: string): ProjectFilterTarget[] {
-  const identities: ProjectFilterTarget[] = []
-  for (const day of cache.days) {
-    if (day.date < startStr || day.date > endStr || !day.projects) continue
-    for (const [name, stats] of Object.entries(day.projects)) {
-      identities.push({ project: name, projectPath: stats.path ?? '' })
-    }
-  }
-  return identities
 }
 
 export async function buildDurablePeriod(periodInfo: PeriodInfo, opts: AggregateOpts = {}): Promise<DurablePeriod> {
@@ -777,13 +771,8 @@ export async function buildDurablePeriod(periodInfo: PeriodInfo, opts: Aggregate
   }
 
   const carriedCostUSD = days.reduce((s, d) => s + (d.carried ? d.cost : 0), 0)
-  // Judged against everything this period could have matched, which on the
-  // durable path includes carried days whose sources are long gone.
-  reportUnmatchedProjectPatterns(
-    [...seenProjects, ...cachedProjectIdentities(cache, rangeStartStr, rangeEndStr)],
-    opts.project, opts.exclude,
-  )
-  return { data, days, carriedCostUSD, unattributedCostUSD, liveProjects, cache, todayAllDays, scanRange }
+  const knownProjects = [...seenProjects, ...cachedProjectIdentities(cache, rangeStartStr, rangeEndStr)]
+  return { data, days, carriedCostUSD, unattributedCostUSD, liveProjects, knownProjects, cache, todayAllDays, scanRange }
 }
 
 type PayloadProject = NonNullable<PeriodData['projects']>[number]
