@@ -3,7 +3,10 @@ import { CATEGORY_LABELS, type ProjectSummary, type SessionSummary, type TaskCat
 import { isBehavioralCall } from './behavioral-weight.js'
 import { type PeriodData, type ProviderCost, type BreakdownArrays, type MenubarPayload, type ClaudeConfigSelector, type HydrationState, buildMenubarPayload } from './menubar-json.js'
 import { type SessionCountBasis } from './session-count-label.js'
-import { parseAllSessions, filterProjectsByName, filterProjectsByDays, filterProjectsByClaudeConfigSource, filterProjectsByDateRange, isSessionHydrationComplete, matchesProjectPattern, sessionHydrationSnapshot } from './parser.js'
+import { reportUnmatchedProjectPatterns } from './project-filter-warnings.js'
+
+type ProjectFilter = (entry: ProjectFilterTarget) => boolean
+import { parseAllSessions, filterProjectsByName, filterProjectsByDays, filterProjectsByClaudeConfigSource, filterProjectsByDateRange, isSessionHydrationComplete, makeProjectFilter, type ProjectFilterTarget, sessionHydrationSnapshot } from './parser.js'
 import { findUnpricedModels, getFlatRateModelsConfigHash, getLocalModelSavingsConfigHash, getPriceOverridesConfigHash, getShortModelName, isExpectedFreeModel } from './models.js'
 import { getAllProviders, safeDiscoverSessions } from './providers/index.js'
 import { loadPlugins, pluginPayloadSections } from './plugins/loader.js'
@@ -376,33 +379,16 @@ export function overlayProviderDaySlices(
   return mergeDayEntries(freshSliced, sliced, false, undefined, true)
 }
 
-/// Does a cached day's project entry pass the active name filters? Delegates to
-/// the one rule filterProjectsByName applies, so a filter selects the same
-/// projects whether it is resolved against a fresh parse or against the day
-/// cache — a second copy here put anchored live days and substring-matched
-/// cached days inside one headline. Patterns arrive raw: the rule casefolds
-/// identified Windows paths itself and keeps POSIX case as identity. `path` is
-/// absent on entries whose sessions were gone before it could be recorded; the
-/// name is then all there is to match on, as it is for the display layers.
-function dayProjectMatches(name: string, path: string | undefined, include: string[], exclude: string[]): boolean {
-  const entry = { project: name, projectPath: path ?? '' }
-  const hit = (pattern: string): boolean => matchesProjectPattern(entry, pattern)
-  if (include.length > 0 && !include.some(hit)) return false
-  if (exclude.length > 0 && exclude.some(hit)) return false
-  return true
-}
-
-/// Sum the per-project day stats that pass the filters. `defineProperty` so a
-/// project directory named "__proto__" stays an own key instead of mutating the
-/// prototype link (same reason day-aggregator does it when writing them).
+/// `path` is absent on entries whose sessions were gone before it could be
+/// recorded; the name is then all there is to match on, as it is for the
+/// display layers.
 function sumMatchingProjects(
   projects: Record<string, ProjectDayStats>,
-  include: string[],
-  exclude: string[],
+  matches: ProjectFilter,
 ): { cost: number; calls: number; savingsUSD: number; sessions: number; projects: Record<string, ProjectDayStats>; matched: number } {
   const out = { cost: 0, calls: 0, savingsUSD: 0, sessions: 0, projects: {} as Record<string, ProjectDayStats>, matched: 0 }
   for (const [name, p] of Object.entries(projects)) {
-    if (!dayProjectMatches(name, p.path, include, exclude)) continue
+    if (!matches({ project: name, projectPath: p.path ?? '' })) continue
     out.cost += p.cost
     out.calls += p.calls
     out.savingsUSD += p.savingsUSD ?? 0
@@ -432,7 +418,7 @@ function sumMatchingProjects(
 /// any project, so it contributes nothing to a project-filtered total and its
 /// cost is surfaced as `unattributedCostUSD` instead of being silently folded in
 /// (understating with a stated figure beats overstating with excluded spend).
-function sliceDayToProject(day: DailyEntry, include: string[], exclude: string[]): DailyEntry {
+function sliceDayToProject(day: DailyEntry, matches: ProjectFilter): DailyEntry {
   const zeroDay = (): DailyEntry => ({
     date: day.date, cost: 0, savingsUSD: 0, calls: 0, sessions: 0,
     inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
@@ -440,7 +426,7 @@ function sliceDayToProject(day: DailyEntry, include: string[], exclude: string[]
     ...(day.carried ? { carried: true as const } : {}),
   })
   if (!day.projects) return zeroDay()
-  const totals = sumMatchingProjects(day.projects, include, exclude)
+  const totals = sumMatchingProjects(day.projects, matches)
   if (totals.matched === 0) return zeroDay()
 
   // Provider slices carry their own per-project split, so `--provider X` on top
@@ -450,7 +436,7 @@ function sliceDayToProject(day: DailyEntry, include: string[], exclude: string[]
   const providers: Record<string, ProviderDaySlice> = {}
   for (const [name, slice] of Object.entries(day.providers)) {
     if (!slice.projects) continue
-    const sliced = sumMatchingProjects(slice.projects, include, exclude)
+    const sliced = sumMatchingProjects(slice.projects, matches)
     if (sliced.matched === 0) continue
     Object.defineProperty(providers, name, {
       value: { cost: sliced.cost, calls: sliced.calls, savingsUSD: sliced.savingsUSD, sessions: sliced.sessions, projects: sliced.projects },
@@ -532,9 +518,8 @@ export function buildDurableOverviewFromNormalizedIndex(
   opts: AggregateOpts = {},
 ): IndexedDurableOverview {
   const pf = opts.provider ?? 'all'
-  const include = opts.project ?? []
-  const exclude = opts.exclude ?? []
-  const hasProjectFilter = include.length > 0 || exclude.length > 0
+  const hasProjectFilter = (opts.project?.length ?? 0) > 0 || (opts.exclude?.length ?? 0) > 0
+  const matchesFilter = makeProjectFilter(opts.project, opts.exclude)
   const filteredProjects = filterProjectsByName(normalizedProjects, opts.project ?? [], opts.exclude ?? [])
   const scanProjects = filterProjectsByDateRange(filteredProjects, periodInfo.range)
   const now = new Date()
@@ -543,7 +528,7 @@ export function buildDurableOverviewFromNormalizedIndex(
   const todayDays = normalizedDays
     .filter(day => day.date === todayStr)
   const historicalSlice = hasProjectFilter
-    ? (day: DailyEntry): DailyEntry => sliceDayToProject(day, include, exclude)
+    ? (day: DailyEntry): DailyEntry => sliceDayToProject(day, matchesFilter)
     : undefined
   const cachedAllDays = unionDaysForPeriod(cache, todayDays, periodInfo, null, historicalSlice)
   const cachedDates = new Set(cache.days.map(day => day.date))
@@ -639,10 +624,25 @@ export type DurablePeriod = {
   scanRange: DateRange
 }
 
+function cachedProjectIdentities(cache: DailyCache, startStr: string, endStr: string): ProjectFilterTarget[] {
+  const identities: ProjectFilterTarget[] = []
+  for (const day of cache.days) {
+    if (day.date < startStr || day.date > endStr || !day.projects) continue
+    for (const [name, stats] of Object.entries(day.projects)) {
+      identities.push({ project: name, projectPath: stats.path ?? '' })
+    }
+  }
+  return identities
+}
+
 export async function buildDurablePeriod(periodInfo: PeriodInfo, opts: AggregateOpts = {}): Promise<DurablePeriod> {
   const pf = opts.provider ?? 'all'
   const daysSelection = opts.daysSelection ?? null
-  const fp = (p: ProjectSummary[]) => filterProjectsByName(p, opts.project ?? [], opts.exclude ?? [])
+  const seenProjects: ProjectFilterTarget[] = []
+  const fp = (p: ProjectSummary[]) => {
+    seenProjects.push(...p)
+    return filterProjectsByName(p, opts.project ?? [], opts.exclude ?? [])
+  }
 
   const now = new Date()
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
@@ -704,9 +704,8 @@ export async function buildDurablePeriod(periodInfo: PeriodInfo, opts: Aggregate
   // name-filtered above (`fp`), but the historical remainder comes straight out
   // of the day cache, so without this slice a --project/--exclude headline
   // counted every expired-source day whole while the detail panels did not.
-  const projectInclude = opts.project ?? []
-  const projectExclude = opts.exclude ?? []
-  const hasProjectFilter = projectInclude.length > 0 || projectExclude.length > 0
+  const hasProjectFilter = (opts.project?.length ?? 0) > 0 || (opts.exclude?.length ?? 0) > 0
+  const matchesFilter = makeProjectFilter(opts.project, opts.exclude)
   // What a filtered total cannot claim, and therefore has to leave out: a cached
   // day with no project split at all, or — with a provider filter also active,
   // since the headline then reads that provider's slice — a slice carried from a
@@ -722,7 +721,7 @@ export async function buildDurablePeriod(periodInfo: PeriodInfo, opts: Aggregate
   const sliceHistorical = hasProjectFilter
     ? (day: DailyEntry): DailyEntry => {
         unattributedCostUSD += unattributableCost(day)
-        return sliceDayToProject(day, projectInclude, projectExclude)
+        return sliceDayToProject(day, matchesFilter)
       }
     : undefined
 
@@ -778,6 +777,12 @@ export async function buildDurablePeriod(periodInfo: PeriodInfo, opts: Aggregate
   }
 
   const carriedCostUSD = days.reduce((s, d) => s + (d.carried ? d.cost : 0), 0)
+  // Judged against everything this period could have matched, which on the
+  // durable path includes carried days whose sources are long gone.
+  reportUnmatchedProjectPatterns(
+    [...seenProjects, ...cachedProjectIdentities(cache, rangeStartStr, rangeEndStr)],
+    opts.project, opts.exclude,
+  )
   return { data, days, carriedCostUSD, unattributedCostUSD, liveProjects, cache, todayAllDays, scanRange }
 }
 

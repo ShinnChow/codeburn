@@ -3,6 +3,7 @@ import { Command, Option } from 'commander'
 import { installMenubarApp } from './menubar-installer.js'
 import { exportCsv, exportJson, type PeriodExport } from './export.js'
 import { findUnpricedModels, loadPricing, sanitizeModelForDisplay, setModelAliases, setPriceOverrides, setLocalModelSavings, setFlatRateModels, setFlatRateRemoved, setProxyPaths, normalizeProxyPath, unpricedModelHint, isBuiltInFlatRateModel, isSameFlatRateModel, getProxyPathsConfigHash, getModelAliasesConfigHash, getPriceOverridesConfigHash, getLocalModelSavingsConfigHash, getFlatRateModelsConfigHash, getPricingGenerationKey } from './models.js'
+import { reportUnmatchedProjectPatterns } from './project-filter-warnings.js'
 import { parseAllSessions, filterProjectsByName, filterProjectsByDateRange, clearSessionCache, setInteractiveScanUI, computeCorpusFingerprint, isSessionHydrationComplete } from './parser.js'
 import { allProviderNames, getAllProviders } from './providers/index.js'
 import { getProvider } from './providers/index.js'
@@ -1365,7 +1366,16 @@ program
     assertProvider(opts.provider, 'export')
     await loadPricing()
     const pf = opts.provider
-    const fp = (p: ProjectSummary[]) => filterProjectsByName(p, opts.project, opts.exclude)
+    let patternsChecked = false
+    const fp = (p: ProjectSummary[]) => {
+      // Both callers below pass a whole-period parse, so the first one is the
+      // widest list this command ever sees.
+      if (!patternsChecked) {
+        patternsChecked = true
+        reportUnmatchedProjectPatterns(p, opts.project, opts.exclude)
+      }
+      return filterProjectsByName(p, opts.project, opts.exclude)
+    }
     let customRange: DateRange | null = null
     try {
       customRange = parseDateRangeFlags(opts.from, opts.to)
@@ -2065,7 +2075,9 @@ program
     } else {
       ({ range, label } = getDateRange(opts.period))
     }
-    const projects = filterProjectsByName(await parseAllSessions(range, opts.provider), opts.project, opts.exclude)
+    const parsed = await parseAllSessions(range, opts.provider)
+    reportUnmatchedProjectPatterns(parsed, opts.project, opts.exclude)
+    const projects = filterProjectsByName(parsed, opts.project, opts.exclude)
     if (opts.apply) {
       const { runOptimizeApply } = await import('./act/optimize-apply.js')
       await runOptimizeApply(projects, range, { yes: opts.yes, dryRun: opts.dryRun, only: opts.only, provider: opts.provider })
@@ -2225,7 +2237,9 @@ program
     const { range, label } = getDateRange(opts.period)
     if (opts.format === 'json') {
       const { aggregateModelStats, buildCompareJson, findModelStat, renderCompareJson, scanSelfCorrections } = await import('./compare-stats.js')
-      const projects = filterProjectsByName(await parseAllSessions(range, opts.provider), opts.project, opts.exclude)
+      const parsed = await parseAllSessions(range, opts.provider)
+    reportUnmatchedProjectPatterns(parsed, opts.project, opts.exclude)
+    const projects = filterProjectsByName(parsed, opts.project, opts.exclude)
       const models = aggregateModelStats(projects)
 
       const providers = await getAllProviders()
@@ -2296,7 +2310,9 @@ program
       range = getDateRange(opts.period).range
     }
 
-    const projects = filterProjectsByName(await parseAllSessions(range, opts.provider), opts.project, opts.exclude)
+    const parsed = await parseAllSessions(range, opts.provider)
+    reportUnmatchedProjectPatterns(parsed, opts.project, opts.exclude)
+    const projects = filterProjectsByName(parsed, opts.project, opts.exclude)
     const rows = await aggregateAudit(projects)
 
     const fmt = (opts.format ?? 'table').toLowerCase()
@@ -2349,7 +2365,9 @@ program
       range = getDateRange(opts.period).range
     }
 
-    const projects = filterProjectsByName(await parseAllSessions(range, opts.provider), opts.project, opts.exclude)
+    const parsed = await parseAllSessions(range, opts.provider)
+    reportUnmatchedProjectPatterns(parsed, opts.project, opts.exclude)
+    const projects = filterProjectsByName(parsed, opts.project, opts.exclude)
     const topN = typeof opts.top === 'number' && Number.isFinite(opts.top) ? opts.top : undefined
     let rows = await aggregateModels(projects, {
       byTask: !!opts.byTask,
@@ -2443,7 +2461,9 @@ program
       range = getDateRange(opts.period).range
     }
 
-    const projects = filterProjectsByName(await parseAllSessions(range, opts.provider), opts.project, opts.exclude)
+    const parsed = await parseAllSessions(range, opts.provider)
+    reportUnmatchedProjectPatterns(parsed, opts.project, opts.exclude)
+    const projects = filterProjectsByName(parsed, opts.project, opts.exclude)
     if (opts.byPr) {
       const { rows: prRows, totals } = buildPrAttribution(projects)
       if (opts.format === 'json') {

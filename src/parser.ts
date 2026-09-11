@@ -4418,19 +4418,62 @@ export function isRootedProjectPattern(pattern: string): boolean {
   return raw.startsWith('/') || /^[a-zA-Z]:\//.test(raw)
 }
 
+/// A pattern is normalized once and matched many times: the day cache runs the
+/// filter for every project of every day, and again per provider slice.
+type CompiledPattern = { rooted: true; anchor: string | null } | { rooted: false; needle: string }
+
+export type ProjectFilterTarget = { project: string; projectPath?: string }
+
+function compile(patterns: readonly string[]): CompiledPattern[] {
+  return patterns.map(pattern => isRootedProjectPattern(pattern)
+    ? { rooted: true as const, anchor: normalizeAbsProjectPathKey(pattern) }
+    : { rooted: false as const, needle: pattern.toLowerCase() })
+}
+
 /// An absolute path names ONE project, so it anchors on a segment boundary (the
 /// isProxiedPath rule): "/a/proj" takes "/a/proj/sub" but not "/a/proj-ui-kit".
 /// Both sides key through normalizeAbsProjectPathKey (Windows casefolds, POSIX
 /// does not, #1260), and rootedness alone picks the branch, so "/" names none.
-export function matchesProjectPattern(project: { project: string; projectPath?: string }, pattern: string): boolean {
-  const projectPath = project.projectPath ?? ''
-  if (isRootedProjectPattern(pattern)) {
-    const anchor = normalizeAbsProjectPathKey(pattern)
-    const target = normalizeAbsProjectPathKey(projectPath)
-    return anchor !== null && target !== null && (target === anchor || target.startsWith(anchor + '/'))
+function hit(entry: ProjectFilterTarget, pattern: CompiledPattern, key: string | null): boolean {
+  if (pattern.rooted) {
+    const anchor = pattern.anchor
+    return anchor !== null && key !== null && (key === anchor || key.startsWith(anchor + '/'))
   }
-  const needle = pattern.toLowerCase()
-  return project.project.toLowerCase().includes(needle) || projectPath.toLowerCase().includes(needle)
+  return entry.project.toLowerCase().includes(pattern.needle)
+    || (entry.projectPath ?? '').toLowerCase().includes(pattern.needle)
+}
+
+/// The filter as one closure: patterns are compiled here, so the caller can
+/// hold it across a loop, and include-then-exclude is composed in one place for
+/// the live parse and the day cache alike.
+export function makeProjectFilter(
+  include?: readonly string[],
+  exclude?: readonly string[],
+): (entry: ProjectFilterTarget) => boolean {
+  const inc = compile(include ?? [])
+  const exc = compile(exclude ?? [])
+  return entry => {
+    const key = normalizeAbsProjectPathKey(entry.projectPath ?? '')
+    if (inc.length > 0 && !inc.some(pattern => hit(entry, pattern, key))) return false
+    if (exc.length > 0 && exc.some(pattern => hit(entry, pattern, key))) return false
+    return true
+  }
+}
+
+export function matchesProjectPattern(project: ProjectFilterTarget, pattern: string): boolean {
+  return makeProjectFilter([pattern])(project)
+}
+
+/// Which rooted patterns name no project here? Each is tried on its own against
+/// the UNFILTERED list: judged inside filterProjectsByName instead, an earlier
+/// --project would mask a later one that selects the same project, and an
+/// --exclude would be tested against what --project had already removed.
+export function unmatchedRootedPatterns(projects: readonly ProjectFilterTarget[], patterns: readonly string[]): string[] {
+  return patterns.filter(pattern => {
+    if (!isRootedProjectPattern(pattern)) return false
+    const matches = makeProjectFilter([pattern])
+    return !projects.some(entry => matches(entry))
+  })
 }
 
 export function filterProjectsByName(
@@ -4438,14 +4481,9 @@ export function filterProjectsByName(
   include?: string[],
   exclude?: string[],
 ): ProjectSummary[] {
-  let result = projects
-  if (include && include.length > 0) {
-    result = result.filter(p => include.some(pattern => matchesProjectPattern(p, pattern)))
-  }
-  if (exclude && exclude.length > 0) {
-    result = result.filter(p => !exclude.some(pattern => matchesProjectPattern(p, pattern)))
-  }
-  return result
+  if ((include?.length ?? 0) === 0 && (exclude?.length ?? 0) === 0) return projects
+  const matches = makeProjectFilter(include, exclude)
+  return projects.filter(matches)
 }
 
 function turnDayString(turn: ClassifiedTurn): string | null {
