@@ -4,7 +4,7 @@ import { render, Box, Text, useInput, useApp, useStdout } from 'ink'
 import type { ModelStats, ComparisonRow, CategoryComparison, WorkingStyleRow } from './compare-stats.js'
 import { aggregateModelStats, computeComparison, computeCategoryComparison, computeWorkingStyle, findModelStat, scanSelfCorrections } from './compare-stats.js'
 import { formatCost } from './format.js'
-import { parseAllSessions, setInteractiveScanUI } from './parser.js'
+import { filterProjectsByName, parseAllSessions, setInteractiveScanUI } from './parser.js'
 import { getAllProviders } from './providers/index.js'
 import type { ProjectSummary, DateRange } from './types.js'
 import { patchStdoutForWindows } from './ink-win.js'
@@ -509,7 +509,7 @@ export function CompareView({ projects, onBack, presetModels }: CompareViewProps
   )
 }
 
-export async function renderCompare(range: DateRange, provider: string, modelA?: string, modelB?: string): Promise<void> {
+export async function renderCompare(range: DateRange, provider: string, modelA?: string, modelB?: string, projectFilter?: string[], excludeFilter?: string[]): Promise<void> {
   // Interactive Ink UI: suppress the CLI scan-progress line for the whole
   // lifetime so it can't print over the rendered comparison. Plain CLI
   // commands still show progress.
@@ -521,7 +521,7 @@ export async function renderCompare(range: DateRange, provider: string, modelA?:
   }
 
   patchStdoutForWindows()
-  const projects = await parseAllSessions(range, provider)
+  const projects = filterProjectsByName(await parseAllSessions(range, provider), projectFilter, excludeFilter)
 
   // --model-a/--model-b: resolve up front (by canonical id or display name,
   // same lookup the JSON path uses) so the TUI jumps straight to results

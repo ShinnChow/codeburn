@@ -653,7 +653,7 @@ codeburn month --project api --project web       # include multiple projects
 codeburn export --project inventory              # export only "inventory" project data
 ```
 
-Filter by provider, project name (case-insensitive substring), or exact date range. The `--project` and `--exclude` flags work on all commands and can be combined with `--provider`.
+Filter by provider, project, or exact date range. The `--project` and `--exclude` flags work on every reporting command and can be combined with `--provider`. A plain word matches a project's name or path as a case-insensitive substring, so `--project my-company` also covers `my-company-kit` and its worktrees. An absolute path selects that one project and anything inside it, so `--exclude /Users/me/work/my-company` leaves the sibling `/Users/me/work/my-company-kit` alone. A leading `~` is expanded against your home directory, so a quoted `'~/work/my-company'` selects the same project as the path the shell would have expanded. An absolute POSIX path is case-sensitive, the same rule that decides project identity everywhere else (`/Users/me/Vault` and `/Users/me/vault` are two projects); a Windows drive or UNC path folds case. An absolute path that matches no project in the period you asked for is reported on stderr, since it would otherwise leave a total that looks right.
 
 ```bash
 codeburn report --from 2026-04-01 --to 2026-04-10   # explicit window
