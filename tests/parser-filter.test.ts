@@ -1,3 +1,5 @@
+import { homedir } from 'node:os'
+
 import { describe, it, expect } from 'vitest'
 
 import { filterProjectsByName } from '../src/parser.js'
@@ -102,6 +104,14 @@ describe('filterProjectsByName', () => {
     expect(filterProjectsByName(projects, ['/'])).toEqual([])
     expect(filterProjectsByName(projects, undefined, ['/'])).toEqual(projects)
     expect(filterProjectsByName(projects, undefined, ['//'])).toEqual(projects)
+  })
+
+  it('expands a leading ~ the shell did not, and anchors it', () => {
+    const home = homedir().replace(/\\/g, '/')
+    const mine = [makeProject('app', `${home}/work/app`), makeProject('app-kit', `${home}/work/app-kit`)]
+    expect(filterProjectsByName(mine, ['~/work/app']).map(p => p.project)).toEqual(['app'])
+    expect(filterProjectsByName(mine, undefined, ['~/work/app']).map(p => p.project)).toEqual(['app-kit'])
+    expect(filterProjectsByName(mine, ['~/nowhere'])).toEqual([])
   })
 
   it('exclude matches path substring', () => {

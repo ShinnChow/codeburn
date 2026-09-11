@@ -1,3 +1,4 @@
+import { homedir } from 'node:os'
 import { existsSync } from 'fs'
 import { lstat, readFile, readdir, stat } from 'fs/promises'
 import { createHash } from 'crypto'
@@ -3170,6 +3171,10 @@ export function setInteractiveScanUI(active = true): void {
   interactiveScanUI = active
 }
 
+export function isInteractiveScanUI(): boolean {
+  return interactiveScanUI
+}
+
 // Machine-readable scan progress for the desktop app's first-run splash. Plain
 // CLI/terminal usage is untouched: emission is gated on CODEBURN_PROGRESS=1,
 // which only the app's cold-start warmup spawn sets. Each event is one
@@ -4415,7 +4420,16 @@ export function setCachePutMeta(meta: { startMs: number; endMs: number; sig: str
 
 export function isRootedProjectPattern(pattern: string): boolean {
   const raw = pattern.trim().replace(/\\/g, '/')
-  return raw.startsWith('/') || /^[a-zA-Z]:\//.test(raw)
+  return raw.startsWith('/') || raw === '~' || raw.startsWith('~/') || /^[a-zA-Z]:\//.test(raw)
+}
+
+/// A quoted "~/proj" reaches us unexpanded, and so does one typed into a field
+/// with no shell behind it. Left as a loose word it would match nothing and say
+/// nothing, since no stored path contains a tilde.
+function expandTilde(pattern: string): string {
+  const raw = pattern.trim().replace(/\\/g, '/')
+  if (raw !== '~' && !raw.startsWith('~/')) return raw
+  return homedir().replace(/\\/g, '/') + raw.slice(1)
 }
 
 /// A pattern is normalized once and matched many times: the day cache runs the
@@ -4426,7 +4440,7 @@ export type ProjectFilterTarget = { project: string; projectPath?: string }
 
 function compile(patterns: readonly string[]): CompiledPattern[] {
   return patterns.map(pattern => isRootedProjectPattern(pattern)
-    ? { rooted: true as const, anchor: normalizeAbsProjectPathKey(pattern) }
+    ? { rooted: true as const, anchor: normalizeAbsProjectPathKey(expandTilde(pattern)) }
     : { rooted: false as const, needle: pattern.toLowerCase() })
 }
 
@@ -4452,8 +4466,12 @@ export function makeProjectFilter(
 ): (entry: ProjectFilterTarget) => boolean {
   const inc = compile(include ?? [])
   const exc = compile(exclude ?? [])
+  // The key costs a trim, a global replace and three regex passes. The day cache
+  // runs this per project, per day, per provider slice, so it is only paid when
+  // some pattern is rooted and can actually read it.
+  const needsKey = inc.some(p => p.rooted) || exc.some(p => p.rooted)
   return entry => {
-    const key = normalizeAbsProjectPathKey(entry.projectPath ?? '')
+    const key = needsKey ? normalizeAbsProjectPathKey(entry.projectPath ?? '') : null
     if (inc.length > 0 && !inc.some(pattern => hit(entry, pattern, key))) return false
     if (exc.length > 0 && exc.some(pattern => hit(entry, pattern, key))) return false
     return true
@@ -4471,8 +4489,7 @@ export function matchesProjectPattern(project: ProjectFilterTarget, pattern: str
 export function unmatchedRootedPatterns(projects: readonly ProjectFilterTarget[], patterns: readonly string[]): string[] {
   return patterns.filter(pattern => {
     if (!isRootedProjectPattern(pattern)) return false
-    const matches = makeProjectFilter([pattern])
-    return !projects.some(entry => matches(entry))
+    return !projects.some(entry => matchesProjectPattern(entry, pattern))
   })
 }
 
