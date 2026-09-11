@@ -142,7 +142,7 @@ async function writeVersionedSession(
 }
 
 // Released layouts checked against deepseek-ai/deepseek-harness at
-// 2ad76263a53497763575b5ad4ca5acf67ae00987:
+// c291e7961a515f6d7af9304e7fd1d257929aef26:
 // packages/session/session-format-v0-to-v1/src/codec.ts (v1),
 // packages/session/session-format-v1-to-v2/src/codec.ts (v2), and
 // packages/session/session-format-v2-to-v3/src/codec.ts (v3).
@@ -302,6 +302,45 @@ describe('dsh provider - session discovery', () => {
 })
 
 describe('dsh provider - parsing', () => {
+  it('counts failed and successful attempts from the official-validated retry fixture', async () => {
+    const content = await readFile(join(import.meta.dirname, '../fixtures/dsh/v3-retry.jsonl'), 'utf8')
+    const path = await writeVersionedSession(3, '--fixture--', 'fixture-retry', content.trim().split('\n'))
+    const calls = await parseAll(createDshProvider(tmpDir), path)
+    expect(calls.map(call => [call.inputTokens, call.outputTokens, call.reasoningTokens])).toEqual([[10, 4, 2], [100, 20, 8]])
+    expect(calls.every(call => call.model === 'deepseek-v4-flash')).toBe(true)
+    expect(calls.reduce((sum, call) => sum + call.inputTokens + billableOutputTokens('dsh', call.outputTokens, call.reasoningTokens)
+      + call.cacheReadInputTokens + call.cacheCreationInputTokens, 0)).toBe(174)
+  })
+
+  it.each(([0, 1, 2, 3] as const).flatMap(version => [false, true].map(retry => ({ version, retry }))))(
+    'replaces non-adjacent settlements per step in v$version (retry=$retry)', async ({ version, retry }) => {
+    const sample = (step: number, input: number) => version <= 1
+      ? chunkUsage(1, step, { inputTokens: input, outputTokens: 10 }, 1786707340000)
+      : JSON.stringify({ type: 'assistant/attempt', seq: step, time: 1786707340000,
+          data: { turn: 1, step, stream: embeddedUsage({ inputTokens: input, outputTokens: 10 }, 1786707340000) } })
+    const rows = [version === 0 ? sessionHeader() : versionedHeader(version),
+      sample(1, 100), sample(2, 200),
+      assistantMessage(1, 1, { inputTokens: 100, outputTokens: 10 }, 1786707340100),
+      ...(retry ? [JSON.stringify({ type: 'llm/retry-started', seq: 8, time: 1786707340150,
+        data: { turn: 1, step: 1, retryId: 'interleaved-retry', retry: 1 } }),
+      assistantMessage(1, 1, { inputTokens: 150, outputTokens: 10 }, 1786707340180)] : []),
+      assistantMessage(1, 2, { inputTokens: 200, outputTokens: 10 }, 1786707340200)]
+    const path = version === 0 ? await writePlainSession('--fixture--', 'interleaved', rows)
+      : await writeVersionedSession(version, '--fixture--', 'interleaved', rows)
+    const calls = await parseAll(createDshProvider(tmpDir), path)
+    expect(calls.map(call => call.inputTokens)).toEqual(retry ? [100, 150, 200] : [100, 200])
+  })
+
+  it.each([0, 1] as const)('retains non-fork v%s usage when only seedLength is present', async version => {
+    const rows = [JSON.stringify({ type: 'session', version, id: 'non-fork', seedLength: 4,
+      createdAt: 1786707340000, cwd: '/fixture/project', delegationDepth: 0 }),
+    ...[1, 2, 3, 4].map((step, seq) => JSON.stringify({ type: 'assistant/message', seq,
+      time: 1786707340000, data: { turn: 1, step, usage: { inputTokens: 100, outputTokens: 10 } } }))]
+    const path = version === 0 ? await writePlainSession('--fixture--', 'non-fork', rows)
+      : await writeVersionedSession(version, '--fixture--', 'non-fork', rows)
+    expect((await parseAll(createDshProvider(tmpDir), path)).map(call => call.inputTokens)).toEqual([100, 100, 100, 100])
+  })
+
   it.each([0, 1, 2, 3] as const)('matches official DSH totals for the sanitized v%s fixture', async version => {
     const content = await readFile(join(import.meta.dirname, `../fixtures/dsh/v${version}.jsonl`), 'utf8')
     const lines = content.trim().split('\n')
@@ -310,7 +349,7 @@ describe('dsh provider - parsing', () => {
       : await writeVersionedSession(version, '--fixture--', 'fixture-session', lines)
     const calls = await parseAll(createDshProvider(tmpDir), path)
     expect(calls).toHaveLength(1)
-    expect(calls[0]).toMatchObject({ inputTokens: 100, outputTokens: 12, reasoningTokens: 8, cacheReadInputTokens: 30, cacheCreationInputTokens: 5 })
+    expect(calls[0]).toMatchObject({ inputTokens: 100, outputTokens: 20, reasoningTokens: 8, cacheReadInputTokens: 30, cacheCreationInputTokens: 5 })
     expect(billableOutputTokens('dsh', calls[0]!.outputTokens, calls[0]!.reasoningTokens)).toBe(20)
   })
   it('does not reuse the previous request context after a model change', async () => {
@@ -354,7 +393,7 @@ describe('dsh provider - parsing', () => {
     ])
     const calls = await parseAll(createDshProvider(tmpDir), filePath)
     expect(calls).toHaveLength(1)
-    expect(calls[0]).toMatchObject({ inputTokens: 10, outputTokens: 0, costIsEstimated: true })
+    expect(calls[0]).toMatchObject({ inputTokens: 10, outputTokens: 'outputTokens' in usage ? usage.outputTokens : 0, costIsEstimated: true })
   })
 
   it.each([1, 2, 3] as const)('uses only the usage layout belonging to format v%s', async (version) => {
@@ -584,8 +623,8 @@ describe('dsh provider - parsing', () => {
     const calls = await parseAll(createDshProvider(tmpDir), filePath)
     expect(calls).toHaveLength(1)
     expect(calls[0]!.inputTokens).toBe(14981)
-    // The final output includes reasoning; expose only ordinary output here.
-    expect(calls[0]!.outputTokens).toBe(47)
+    // Preserve raw output, including reasoning, for the shared billing rule.
+    expect(calls[0]!.outputTokens).toBe(656)
     expect(calls[0]!.reasoningTokens).toBe(609)
     expect(calls[0]!.timestamp).toBe(new Date(1786707340050).toISOString())
   })
@@ -628,7 +667,7 @@ describe('dsh provider - parsing', () => {
     expect(calls.map(c => c.model)).toEqual(['deepseek-v4-pro', 'deepseek-v4-pro', 'deepseek-v4-flash'])
   })
 
-  it('splits inclusive reasoning into disjoint output buckets at the output rate', async () => {
+  it('preserves inclusive reasoning and bills output once through the shared rule', async () => {
     const filePath = await writeZstdSession('--C-Users-test-myproject--', 'session-reason', [
       [sessionHeader({ id: 'session-reason' })],
       [requestHeader('deepseek-v4-pro')],
@@ -637,7 +676,7 @@ describe('dsh provider - parsing', () => {
 
     const calls = await parseAll(createDshProvider(tmpDir), filePath)
     expect(calls).toHaveLength(1)
-    expect(calls[0]).toMatchObject({ outputTokens: 60, reasoningTokens: 40 })
+    expect(calls[0]).toMatchObject({ outputTokens: 100, reasoningTokens: 40 })
     expect(billableOutputTokens('dsh', calls[0]!.outputTokens, calls[0]!.reasoningTokens)).toBe(100)
     // DSH's TokenUsage reasoningTokens is informational detail already
     // included in outputTokens, so the output bucket is billed exactly once.
@@ -791,7 +830,7 @@ describe('dsh provider - real log fidelity', () => {
     expect(calls.map(c => c.model)).toEqual(['deepseek-v4-flash', 'deepseek-v4-flash'])
     expect(calls[0]).toMatchObject({
       inputTokens: 2877,
-      outputTokens: 72,
+      outputTokens: 90,
       cacheReadInputTokens: 0,
       reasoningTokens: 18,
       sessionId: 'e128dda9-ed11-4868-8266-0ef90d03c3d6',
@@ -799,7 +838,7 @@ describe('dsh provider - real log fidelity', () => {
       projectPath: '/home/u/proj',
       workingDirectory: '/home/u/proj',
     })
-    expect(calls[1]).toMatchObject({ inputTokens: 168, outputTokens: 3, cacheReadInputTokens: 2816, reasoningTokens: 22 })
+    expect(calls[1]).toMatchObject({ inputTokens: 168, outputTokens: 25, cacheReadInputTokens: 2816, reasoningTokens: 22 })
     // Reasoning is a subset of output, so it must not be added a second time.
     expect(calls[0]!.costUSD).toBe(calculateCost('deepseek-v4-flash', 2877, 90, 0, 0, 0))
     expect(calls[0]!.costUSD).toBeGreaterThan(0)

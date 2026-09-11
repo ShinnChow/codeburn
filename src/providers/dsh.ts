@@ -4,7 +4,7 @@ import { homedir } from 'os'
 import zlib from 'zlib'
 
 import { MAX_SESSION_FILE_BYTES, readSessionFile, readSessionLines } from '../fs-utils.js'
-import { calculateCost, getShortModelName } from '../models.js'
+import { billableOutputTokens, calculateCost, getShortModelName } from '../models.js'
 import { extractBashCommands } from '../bash-utils.js'
 import type { ProbeRoot, Provider, SessionSource, SessionParser, ParsedProviderCall } from './types.js'
 
@@ -486,7 +486,8 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
       // Events a forked session inherited from its parent. They are a verbatim
       // copy of the parent's log, which codeburn parses as its own session, so
       // counting them here would bill the same calls twice.
-      let inheritedCut = formatVersion <= 1 && typeof header.seedLength === 'number'
+      let inheritedCut = formatVersion <= 1 && typeof header.parentSession === 'string' && header.parentSession
+        && typeof header.seedLength === 'number'
         ? header.seedLength - 1
         : -1
       if (formatVersion >= 2) {
@@ -505,7 +506,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
       }
       const userMessageByTurn = new Map<number, string>()
       const buckets = new Map<string, StepBucket>()
-      const projectionState: { last: { key: string; index: number } | null } = { last: null }
+      const activeAttempts = new Map<string, number>()
 
       for (const event of events) {
         if (event.type === 'session') {
@@ -541,7 +542,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
         if (event.type === 'llm/retry-started') {
           const turn = event.data?.turn ?? currentTurn
           const step = event.data?.step ?? 0
-          if (projectionState.last?.key === `${turn}:${step}`) projectionState.last = null
+          activeAttempts.delete(`${turn}:${step}`)
           continue
         }
 
@@ -607,7 +608,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
         }
         const key = `${turn}:${step}`
         if (!usage) {
-          if (projectionState.last?.key !== key) {
+          if (!activeAttempts.has(key)) {
             notice(`codeburn: DSH session contains an attempt without usage; totals may be incomplete: ${source.path}\n`)
           }
           continue
@@ -618,17 +619,16 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
           buckets.set(key, bucket)
         }
         const observation = { usage, time: event.time, model: reportedModel, final: isFinal }
-        // This is the official tokenUsage projection's replacement slot: a
-        // settlement for the same (turn, step) replaces the immediately prior
-        // sample, while llm/retry-started closes the slot so the next attempt
-        // is additive.
-        if (projectionState.last?.key === key) {
-          if (!bucket.observations[projectionState.last.index]?.final || isFinal) {
-            bucket.observations[projectionState.last.index] = observation
+        // A different step cannot close this step's replacement slot. Only
+        // its own retry-started event makes the next observation additive.
+        const activeIndex = activeAttempts.get(key)
+        if (activeIndex !== undefined) {
+          if (!bucket.observations[activeIndex]?.final || isFinal) {
+            bucket.observations[activeIndex] = observation
           }
         } else {
           bucket.observations.push(observation)
-          projectionState.last = { key, index: bucket.observations.length - 1 }
+          activeAttempts.set(key, bucket.observations.length - 1)
         }
       }
 
@@ -659,16 +659,16 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
           seenKeys.add(dedupKey)
 
           // DSH TokenUsage defines reasoning as informational detail already
-          // included in outputTokens. Split the persisted buckets so shared
-          // pricing and display can add ordinary output and reasoning once.
-          const costUSD = calculateCost(observation.model, input, output, cacheWrite, cacheRead, 0)
+          // included in outputTokens. Preserve raw output and use the same
+          // shared rule as cache rehydration and display (#1075).
+          const costUSD = calculateCost(observation.model, input, billableOutputTokens('dsh', output, reasoning), cacheWrite, cacheRead, 0)
           const [turn] = key.split(':').map(Number)
 
           yield {
             provider: 'dsh',
             model: observation.model,
             inputTokens: input,
-            outputTokens: output - reasoning,
+            outputTokens: output,
             cacheCreationInputTokens: cacheWrite,
             cacheReadInputTokens: cacheRead,
             cachedInputTokens: cacheRead,

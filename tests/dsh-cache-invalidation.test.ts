@@ -10,7 +10,7 @@ const testRoot = vi.hoisted(() => {
 })
 
 import { clearSessionCache, parseAllSessions } from '../src/parser.js'
-import { calculateCost } from '../src/models.js'
+import { billableOutputTokens, calculateCost } from '../src/models.js'
 import { aggregateSessions } from '../src/sessions-report.js'
 import { aggregateModelStats } from '../src/compare-stats.js'
 import { aggregateProjectsIntoDays } from '../src/day-aggregator.js'
@@ -21,7 +21,7 @@ import {
   fingerprintFile,
   type SessionCache,
 } from '../src/session-cache.js'
-import { writeCacheOnDisk } from './fixtures/session-cache-io.js'
+import { readCacheOnDisk, writeCacheOnDisk } from './fixtures/session-cache-io.js'
 
 const DSH_HOME = join(testRoot, 'dsh')
 const CACHE_DIR = join(testRoot, 'cache')
@@ -98,6 +98,25 @@ afterAll(async () => {
 })
 
 describe('DSH multi-generation session cache', () => {
+  it('reparses v4 caches that stored exclusive output before the shared inclusive rule', async () => {
+    const path = await writeLog(3, [])
+    await writeFile(path, [header(3), message(0, 1, 100, 3)].join('\n') + '\n')
+    await calls()
+    const cache = await readCacheOnDisk()
+    const section = cache.providers.dsh!
+    section.envFingerprint = createHash('sha256').update([
+      `DSH_HOME=${DSH_HOME}`, 'parser=session-formats-v0-v3-attempts-v4',
+    ].join('\0')).digest('hex').slice(0, 16)
+    for (const turn of section.files[path]!.turns) {
+      for (const call of turn.calls) call.usage.outputTokens = 2
+    }
+    await writeCacheOnDisk(cache)
+    clearSessionCache()
+    const corrected = await calls()
+    expect(corrected[0]!.usage).toMatchObject({ outputTokens: 5, reasoningTokens: 3 })
+    expect(corrected[0]!.costUSD).toBeCloseTo(calculateCost('gpt-5.4', 100, 5, 0, 0, 0), 12)
+  })
+
   it('counts separate legacy and current sessions while counting migrated history only once, cold and warm', async () => {
     const versions = [0, 1, 2, 3] as const
     for (const version of versions) {
@@ -125,7 +144,7 @@ describe('DSH multi-generation session cache', () => {
       const parsed = sessions.flatMap(session => session.turns).flatMap(turn => turn.assistantCalls)
       expect(parsed).toHaveLength(5)
       expect(parsed.reduce((sum, call) => sum + call.usage.inputTokens, 0)).toBe(500)
-      expect(parsed.reduce((sum, call) => sum + call.usage.outputTokens + call.usage.reasoningTokens, 0)).toBe(100)
+      expect(parsed.reduce((sum, call) => sum + billableOutputTokens('dsh', call.usage.outputTokens, call.usage.reasoningTokens), 0)).toBe(100)
       expect(parsed.reduce((sum, call) => sum + call.usage.cacheReadInputTokens, 0)).toBe(150)
       expect(parsed.reduce((sum, call) => sum + call.usage.cacheCreationInputTokens, 0)).toBe(25)
     }
@@ -194,7 +213,7 @@ describe('DSH multi-generation session cache', () => {
     expect(await calls()).toEqual([])
   })
 
-  it('preserves disjoint reasoning buckets and shared totals through cold and hot caches', async () => {
+  it('preserves inclusive reasoning buckets and shared totals through cold and hot caches', async () => {
     const path = await writeLog(3, [])
     await writeFile(path, [header(3), message(0, 1, 100, 3)].join('\n') + '\n')
     const expectedCost = calculateCost('gpt-5.4', 100, 5, 0, 0, 0)
@@ -205,7 +224,7 @@ describe('DSH multi-generation session cache', () => {
       const parsedCalls = projects.flatMap(project => project.sessions)
         .flatMap(session => session.turns).flatMap(turn => turn.assistantCalls)
       expect(parsedCalls).toHaveLength(1)
-      expect(parsedCalls[0]!.usage).toMatchObject({ inputTokens: 100, outputTokens: 2, reasoningTokens: 3 })
+      expect(parsedCalls[0]!.usage).toMatchObject({ inputTokens: 100, outputTokens: 5, reasoningTokens: 3 })
       expect(parsedCalls[0]!.costUSD).toBeCloseTo(expectedCost, 12)
       expect(aggregateSessions(projects)).toEqual([expect.objectContaining({ outputTokens: 5, cost: expectedCost })])
       expect(aggregateModelStats(projects)).toEqual([expect.objectContaining({ outputTokens: 5, cost: expectedCost })])
