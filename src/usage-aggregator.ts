@@ -1477,7 +1477,16 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
   // a provider-filtered history without re-parsing. Tokens aren't broken down per provider
   // in the cache, so the filtered view shows zero tokens (heatmap/trend still works on cost).
   const historyStartStr = toDateString(new Date(now.getFullYear(), now.getMonth(), now.getDate() - BACKFILL_DAYS))
-  const allCacheDays = getDaysInRange(cache, historyStartStr, yesterdayStr)
+  // Under a project filter the headline is sliced by buildDurablePeriod while
+  // today's days come from the name-filtered parse, so without this the heatmap,
+  // streak and month-to-date beside that headline were every project's spend for
+  // all 364 days before today. Same slice the headline uses, same cost: a cache
+  // day with no project split contributes nothing rather than everything.
+  const rawCacheDays = getDaysInRange(cache, historyStartStr, yesterdayStr)
+  const historyFilter = makeProjectFilter(opts.project, opts.exclude)
+  const allCacheDays = (opts.project?.length ?? 0) > 0 || (opts.exclude?.length ?? 0) > 0
+    ? rawCacheDays.map(day => sliceDayToProject(day, historyFilter))
+    : rawCacheDays
 
   let dailyHistory
   if (isClaudeConfigScoped && claudeConfigs?.selectedId) {
