@@ -472,6 +472,10 @@ function unionDaysForPeriod(
   periodInfo: PeriodInfo,
   daysSelection: Set<string> | null,
   sliceHistorical?: (day: DailyEntry) => DailyEntry,
+  /// Historical days from the parse this period already ran. They are evidence
+  /// about the same dates the cache is answering for, so where one explains
+  /// more of a day than the other, that one is used (#1217).
+  liveHistoricalDays: DailyEntry[] = [],
 ): DailyEntry[] {
   const now = new Date()
   const yesterdayStr = toDateString(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))
@@ -485,8 +489,35 @@ function unionDaysForPeriod(
   // never reaches the slicer (which tallies what it could not attribute).
   const selectedCacheDays = daysSelection ? cacheDays.filter(d => daysSelection.has(d.date)) : cacheDays
   const historicalDays = sliceHistorical ? selectedCacheDays.map(d => sliceHistorical(d)) : selectedCacheDays
+  // A cached day is derived once and then frozen behind the watermark, so a
+  // derivation that missed sources stays the answer forever — the Overview
+  // headline reading below the live panels beneath it (#1217). This run already
+  // parsed these dates. Reconcile the two per (date, provider), keeping
+  // whichever explains MORE calls: a cached day whose transcripts have expired
+  // still wins (nothing live can outbid it), and an under-read cached row stops
+  // suppressing evidence that is sitting on disk. Only dates the cache already
+  // holds are reconciled — filling absent dates is a separate decision each
+  // caller makes for itself. The cache day's own `carried` flag is the only
+  // provenance there is: re-flagging here would mark every date the live parse
+  // agrees on (the common case) as preserved from expired logs.
+  // Only days a live slice could actually win are handed to the merge. On a
+  // healthy cache that is none, so the lifetime period skips cloning every day
+  // it holds — and a date the cache already explains is passed through as the
+  // cache wrote it rather than rebuilt from a live day it would have to
+  // reconstruct back to the same numbers.
+  const cachedByDate = new Map(historicalDays.map(d => [d.date, d]))
+  const liveForCachedDates = liveHistoricalDays.filter(d => {
+    if (daysSelection && !daysSelection.has(d.date)) return false
+    const cached = cachedByDate.get(d.date)
+    return cached != null && Object.entries(d.providers).some(
+      ([provider, slice]) => slice.calls > (Object.hasOwn(cached.providers, provider) ? cached.providers[provider].calls : 0),
+    )
+  })
+  const reconciledDays = liveForCachedDates.length > 0
+    ? mergeDayEntries(liveForCachedDates, historicalDays, false, undefined, 'prefer-richer')
+    : historicalDays
   const todayInRange = todayAllDays.filter(d => d.date >= rangeStartStr && d.date <= rangeEndStr)
-  const unfiltered = [...historicalDays, ...todayInRange].sort((a, b) => a.date.localeCompare(b.date))
+  const unfiltered = [...reconciledDays, ...todayInRange].sort((a, b) => a.date.localeCompare(b.date))
   return daysSelection ? unfiltered.filter(d => daysSelection.has(d.date)) : unfiltered
 }
 
@@ -529,7 +560,14 @@ export function buildDurableOverviewFromNormalizedIndex(
   const historicalSlice = hasProjectFilter
     ? (day: DailyEntry): DailyEntry => sliceDayToProject(day, matchesFilter)
     : undefined
-  const cachedAllDays = unionDaysForPeriod(cache, todayDays, periodInfo, null, historicalSlice)
+  const cachedAllDays = unionDaysForPeriod(
+    cache,
+    todayDays,
+    periodInfo,
+    null,
+    historicalSlice,
+    normalizedDays.filter(day => day.date !== todayStr),
+  )
   const cachedDates = new Set(cache.days.map(day => day.date))
   const rangeStartStr = toDateString(periodInfo.range.start)
   const rangeEndStr = toDateString(periodInfo.range.end)
@@ -554,8 +592,9 @@ export function buildDurableOverviewFromNormalizedIndex(
     // The shared cache can be complete for a date while lacking this selected
     // provider's slice (for example, Claude was cached before Codex appeared).
     // Fill only that absent slice from the provider-scoped normalized index.
-    // An existing slice remains authoritative, retaining carried/expired money
-    // and preventing the surviving source from being counted twice.
+    // An existing slice is authoritative unless the live parse explains more of
+    // it (the reconcile above), which retains carried/expired money and prevents
+    // the surviving source from being counted twice.
     return normalized && Object.hasOwn(normalized.providers, pf)
       ? sliceDayToProvider(normalized, pf)
       : sliceDayToProvider(day, pf)
@@ -719,7 +758,11 @@ export async function buildDurablePeriod(periodInfo: PeriodInfo, opts: Aggregate
       }
     : undefined
 
-  const allDays = unionDaysForPeriod(cache, todayAllDays, periodInfo, daysSelection?.days ?? null, sliceHistorical)
+  // The period parse above already read these dates; today is excluded because
+  // the union takes it from `todayAllDays`, which re-anchors a turn straddling
+  // midnight (see the todayAllDays note above) and must stay the today source.
+  const liveHistoricalDays = aggregateProjectsIntoDays(liveProjects).filter(d => d.date < todayStr)
+  const allDays = unionDaysForPeriod(cache, todayAllDays, periodInfo, daysSelection?.days ?? null, sliceHistorical, liveHistoricalDays)
   const freshDaysInSelection = freshProviderDays.filter(day =>
     day.date >= rangeStartStr
       && day.date <= rangeEndStr
