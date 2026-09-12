@@ -35,7 +35,7 @@ const ZSTD_MAGIC = 0xfd2fb528
 const MAX_FRAME_DECODED_BYTES = 64 * 1024 * 1024
 
 const SUPPORTED_SESSION_FORMAT_VERSIONS = new Set([0, 1, 2, 3])
-const SESSION_LOG_NAME = /^session(?:\.v([1-9][0-9]*))?\.jsonl(?:\.zstd)?$/u
+const SESSION_LOG_NAME = /^session(?:\.v(\d+))?\.jsonl(?:\.zstd)?$/u
 
 const MIN_REASONABLE_TIMESTAMP_MS = 1_000_000_000_000
 
@@ -47,6 +47,19 @@ function notice(message: string): void {
   if (noticed.has(message)) return
   noticed.add(message)
   process.stderr.write(message)
+}
+
+// A notice naming a file cannot dedup on its text: a systematic problem prints
+// one line per session and grows `noticed` without bound. Dedup on the kind
+// instead and show a few example paths.
+const PATH_NOTICE_EXAMPLES = 3
+const noticedPaths = new Map<string, number>()
+
+function noticePath(kind: string, detail: string): void {
+  const seen = (noticedPaths.get(kind) ?? 0) + 1
+  noticedPaths.set(kind, seen)
+  if (seen <= PATH_NOTICE_EXAMPLES) process.stderr.write(`codeburn: ${kind}: ${detail}\n`)
+  else if (seen === PATH_NOTICE_EXAMPLES + 1) process.stderr.write(`codeburn: ${kind}: further paths suppressed\n`)
 }
 
 type ZstdFrame = { start: number; end: number }
@@ -213,7 +226,7 @@ function generationFromPath(filePath: string): number | undefined {
 function headerMatchesPath(header: DshEvent, filePath: string): boolean {
   const generation = generationFromPath(filePath)
   if (generation === undefined || header.version !== generation) {
-    notice(`codeburn: skipping DSH session log whose filename and header versions disagree: ${filePath}\n`)
+    noticePath('skipping DSH session log whose filename and header versions disagree', filePath)
     return false
   }
   return isReadableVersion(header)
@@ -277,7 +290,7 @@ async function readEventLines(filePath: string): Promise<string[] | null> {
       // oversize guard readSessionFile applies to the uncompressed variant.
       const size = (await stat(filePath)).size
       if (size > MAX_SESSION_FILE_BYTES) {
-        notice(`codeburn: skipped oversize DSH session log ${filePath} (${size} bytes)\n`)
+        noticePath('skipped oversize DSH session log', `${filePath} (${size} bytes)`)
         return null
       }
       buffer = await readFile(filePath)
@@ -287,7 +300,7 @@ async function readEventLines(filePath: string): Promise<string[] | null> {
     try {
       return [...readZstdLines(buffer)]
     } catch (err) {
-      notice(`codeburn: skipped corrupt DSH session log ${filePath}: ${err instanceof Error ? err.message : err}\n`)
+      noticePath('skipped corrupt DSH session log', `${filePath}: ${err instanceof Error ? err.message : err}`)
       return null
     }
   }
@@ -386,6 +399,8 @@ async function discoverSessionsInDir(sessionsDir: string, onSkippedVersion?: (ve
       // never fall back to an older snapshot when that authoritative file is
       // unknown or corrupt, since that would silently report stale usage.
       const generationFiles: Array<{ path: string; version: number; compressed: boolean }> = []
+      const slots = new Set<string>()
+      let ambiguous: number | undefined
       const names = await readdir(sessionPath).catch(() => [])
       for (const name of names) {
         const match = SESSION_LOG_NAME.exec(name)
@@ -393,7 +408,25 @@ async function discoverSessionsInDir(sessionsDir: string, onSkippedVersion?: (ve
         const version = match[1] === undefined ? 0 : Number(match[1])
         const candidate = join(sessionPath, name)
         const fileStat = await stat(candidate).catch(() => null)
-        if (fileStat?.isFile()) generationFiles.push({ path: candidate, version, compressed: name.endsWith('.zstd') })
+        if (!fileStat?.isFile()) continue
+        const compressed = name.endsWith('.zstd')
+        // `session.v0.jsonl` names the unversioned generation and
+        // `session.v03.jsonl` names generation 3, so two files can claim one
+        // generation; past 2^53 a generation cannot be ordered at all. Either
+        // way no canonical log can be resolved, and dropping the session
+        // silently is the omission #1281 was about.
+        const slot = `${version}:${String(compressed)}`
+        if (!Number.isSafeInteger(version) || slots.has(slot)) {
+          ambiguous ??= version
+          continue
+        }
+        slots.add(slot)
+        generationFiles.push({ path: candidate, version, compressed })
+      }
+      if (ambiguous !== undefined) {
+        onSkippedVersion?.(ambiguous)
+        noticePath('skipping DSH session whose generation filenames are ambiguous', sessionPath)
+        continue
       }
       generationFiles.sort((a, b) => b.version - a.version || Number(b.compressed) - Number(a.compressed))
       const selected = generationFiles[0]
@@ -406,12 +439,24 @@ async function discoverSessionsInDir(sessionsDir: string, onSkippedVersion?: (ve
         continue
       }
 
-      const header = await readSessionHeader(filePath)
-      if (!header) {
-        notice(`codeburn: skipping unreadable DSH session header: ${filePath}\n`)
+      // Without zstd every compressed header reads as unreadable, so say why
+      // once rather than naming every session log.
+      if (selected.compressed && !zstdDecompress) {
+        onSkippedVersion?.(selected.version)
+        notice('codeburn: DSH sessions need Node >= 22.15 (zstd support); skipping DSH usage.\n')
         continue
       }
-      if (!headerMatchesPath(header, filePath)) continue
+
+      const header = await readSessionHeader(filePath)
+      if (!header) {
+        onSkippedVersion?.(selected.version)
+        noticePath('skipping unreadable DSH session header', filePath)
+        continue
+      }
+      if (!headerMatchesPath(header, filePath)) {
+        onSkippedVersion?.(selected.version)
+        continue
+      }
 
       const cwd = typeof header.cwd === 'string' && header.cwd.trim() ? header.cwd : dirName
       sources.push({ path: filePath, project: projectFromCwd(cwd, dirName), provider: 'dsh' })
@@ -473,7 +518,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
       if (header?.type !== 'session' || !headerMatchesPath(header, source.path)) return
       const formatVersion = header.version!
       if (formatVersion >= 2 && corruptInterior) {
-        notice(`codeburn: skipping corrupt DSH session with malformed interior rows: ${source.path}\n`)
+        noticePath('skipping corrupt DSH session with malformed interior rows', source.path)
         return
       }
 
@@ -495,11 +540,11 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
           .filter(event => event.type === 'session/end-seed' && event.data?.inherited === true && typeof event.seq === 'number')
           .map(event => event.seq!)
         if (header.isSeeded === true && taggedCuts.length === 0) {
-          notice(`codeburn: skipping corrupt seeded DSH session without an inherited end-seed marker: ${source.path}\n`)
+          noticePath('skipping corrupt seeded DSH session without an inherited end-seed marker', source.path)
           return
         }
         if (header.isSeeded !== true && taggedCuts.length > 0) {
-          notice(`codeburn: skipping corrupt unseeded DSH session with an inherited end-seed marker: ${source.path}\n`)
+          noticePath('skipping corrupt unseeded DSH session with an inherited end-seed marker', source.path)
           return
         }
         inheritedCut = taggedCuts.at(-1) ?? -1
@@ -603,13 +648,13 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
         const turn = event.data?.turn ?? currentTurn
         const step = event.data?.step ?? 0
         if (![turn, step].every(value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)) {
-          notice(`codeburn: skipping DSH usage with invalid attempt coordinates: ${source.path}\n`)
+          noticePath('skipping DSH usage with invalid attempt coordinates', source.path)
           continue
         }
         const key = `${turn}:${step}`
         if (!usage) {
           if (!activeAttempts.has(key)) {
-            notice(`codeburn: DSH session contains an attempt without usage; totals may be incomplete: ${source.path}\n`)
+            noticePath('DSH session contains an attempt without usage; totals may be incomplete', source.path)
           }
           continue
         }
@@ -649,7 +694,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
           const reasoning = Math.min(numberOrZero(observation.usage.reasoningTokens), output)
           const completeUsage = usageIsComplete(observation.usage)
           if (!completeUsage) {
-            notice(`codeburn: DSH session contains incomplete or invalid usage; retained counts are estimated: ${source.path}\n`)
+            noticePath('DSH session contains incomplete or invalid usage; retained counts are estimated', source.path)
           }
           if (input + output + cacheRead + cacheWrite === 0) continue
 

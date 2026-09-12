@@ -44,7 +44,8 @@ export type DoctorProviderReport = {
   parseVersion?: string
   /** Session sources discovered (candidate files/dbs). */
   candidatesFound: number
-  /** Sessions excluded by discovery because their highest format is unknown. */
+  /** Sessions discovery dropped for a format reason: an unknown generation,
+   *  an unreadable header, or a header disagreeing with its filename. */
   skippedVersionCount?: number
   /** How many discovered sources we attempted to parse (bounded sample). */
   sampled: number
@@ -319,7 +320,7 @@ async function collectOneProvider(
 
     if (skippedVersionCount > 0) {
       base.status = 'errors'
-      base.verdict = `ERRORS (${pluralSessions(skippedVersionCount)} skipped: unsupported format version; ${pluralSessions(base.candidatesFound)} readable; ${base.parseFailed} sampled parse failures)`
+      base.verdict = `ERRORS (${pluralSessions(skippedVersionCount)} skipped: unreadable or unsupported format; ${pluralSessions(base.candidatesFound)} readable; ${base.parseFailed} sampled parse failures)`
     } else if (base.parseFailed > 0) {
       base.status = 'errors'
       base.verdict = `ERRORS (${base.parseFailed}/${base.sampled} sampled file${base.sampled === 1 ? '' : 's'} failed to parse)`
