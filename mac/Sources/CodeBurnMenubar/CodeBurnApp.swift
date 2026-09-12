@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 import SwiftUI
 import AppKit
 import Observation
@@ -64,10 +65,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
     private var contextMenu: NSMenu?
     fileprivate let store = AppStore()
     let updateChecker = UpdateChecker()
-    /// True while the displays are asleep. Refresh ticks skip spawning
-    /// entirely then: nobody can see the menubar, and every fetch is a full
-    /// Node process (#647).
-    private var displayAsleep = false
     /// Bounds status staleness under App Nap: the 30s timer can be coalesced
     /// once the app naps (no permanent activity assertion anymore, #647), so
     /// this system-scheduled activity guarantees a tick attempt every few
@@ -217,7 +214,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.displayAsleep = false
                 self?.recoverRefreshPipelineAfterInterruption(resetLoading: true, reason: "wake")
                 self?.startStatusItemPlacementRecovery()
             }
@@ -229,22 +225,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.displayAsleep = false
                 self?.recoverRefreshPipelineAfterInterruption(resetLoading: true, reason: "screen wake")
                 self?.startStatusItemPlacementRecovery()
             }
         }
 
-        // Display sleep without system sleep (clamshell displays off, screen
-        // saver energy settings) previously kept the full spawn cadence
-        // running for hours. Skip refreshes until the screens wake.
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.screensDidSleepNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.displayAsleep = true
                 self?.stopStatusItemPlacementRecovery()
             }
         }
@@ -597,12 +588,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
             (now.timeIntervalSince(lastSubscriptionRefreshAt ?? .distantPast) >= threshold)
         )
         let shouldRefreshClaude = force || forceClaude || claudeDue
-        let shouldRefreshCodex = force || forceCodex || (
-            autoRefreshAllowed && now.timeIntervalSince(lastCodexRefreshAt ?? .distantPast) >= threshold
+        let shouldRefreshCodex = QuotaRefreshDecision.isDue(
+            force: force || forceCodex,
+            autoRefreshAllowed: autoRefreshAllowed,
+            lastAttemptAt: lastCodexRefreshAt,
+            now: now,
+            threshold: threshold
         )
-        let shouldRefreshCapacityDockProviders = force || forceCapacityDockProviders || (
-            autoRefreshAllowed
-                && now.timeIntervalSince(lastCapacityDockProviderRefreshAt ?? .distantPast) >= threshold
+        let shouldRefreshCapacityDockProviders = QuotaRefreshDecision.isDue(
+            force: force || forceCapacityDockProviders,
+            autoRefreshAllowed: autoRefreshAllowed,
+            lastAttemptAt: lastCapacityDockProviderRefreshAt,
+            now: now,
+            threshold: threshold
         )
         guard shouldRefreshClaude || shouldRefreshCodex || shouldRefreshCapacityDockProviders else {
             return false
@@ -613,35 +611,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
             // the provider fails. Failures get their own shorter backoff below.
             lastSubscriptionRefreshAt = now
         }
+        if shouldRefreshCodex {
+            // Attempt anchor, like the generic adapters below: a disconnected
+            // or failing Codex must not force this branch on every tick.
+            lastCodexRefreshAt = now
+        }
+
+        if shouldRefreshCapacityDockProviders {
+            // Ahead of the Claude/Codex awaits: the dock must not wait on a
+            // slow provider to redraw its rings.
+            lastCapacityDockProviderRefreshAt = now
+            await store.refreshSelectedCapacityDockProviders()
+        }
 
         switch (shouldRefreshClaude, shouldRefreshCodex) {
         case (true, true):
             async let claude = refreshClaudeQuotaSingleFlight()
             async let codex = refreshCodexQuotaSingleFlight()
             let claudeSucceeded = await claude
-            let codexSucceeded = await codex
+            _ = await codex
             finishClaudeQuotaRefresh(
                 succeeded: claudeSucceeded,
                 attemptedAt: now,
                 cadence: threshold
             )
-            if codexSucceeded { lastCodexRefreshAt = Date() }
         case (true, false):
             let succeeded = await refreshClaudeQuotaSingleFlight()
             finishClaudeQuotaRefresh(succeeded: succeeded, attemptedAt: now, cadence: threshold)
         case (false, true):
-            if await refreshCodexQuotaSingleFlight() {
-                lastCodexRefreshAt = Date()
-            }
+            _ = await refreshCodexQuotaSingleFlight()
         case (false, false):
             break
-        }
-        if shouldRefreshCapacityDockProviders {
-            // Generic adapters have their own attempt anchor. They must not be
-            // polled on every payload tick merely because Codex is disconnected
-            // or a Codex refresh failed.
-            lastCapacityDockProviderRefreshAt = now
-            await store.refreshSelectedCapacityDockProviders()
         }
         return true
     }
@@ -766,9 +766,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
         // key's stuck loading / in-flight / generation bookkeeping and force a
         // fresh fetch — even if the cache looks "not stale yet". This is the
         // guaranteed one-round-trip recovery path.
-        // An open popover also proves the screens are on: recover from a
-        // missed screensDidWake so a latched flag can't suppress refreshes.
-        displayAsleep = false
         if refreshTimer == nil {
             startRefreshLoop(forceQuotaOnStart: false)
         }
@@ -813,7 +810,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
 
     private func runRefreshLoopTick(reason: String, forcePayload: Bool = false, forceQuota: Bool = false) {
         refreshLoopHeartbeatAt = Date()
-        if displayAsleep && !forcePayload { return }
+        // Display sleep without system sleep (clamshell displays off, screen
+        // saver energy settings) otherwise keeps the full spawn cadence running
+        // for hours (#647). Asked live rather than latched from
+        // screensDidSleep, so a missed wake notification cannot strand it.
+        if !forcePayload && CGDisplayIsAsleep(CGMainDisplayID()) != 0 { return }
         let hadForceRefreshInFlight = forceRefreshTask != nil
         let clearedStaleForceRefresh = clearStaleForceRefreshIfNeeded()
         let clearedStaleStatusRefresh = clearStaleStatusPayloadRefreshIfNeeded()
@@ -845,6 +846,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
                     forceQuota: forceQuota,
                     qualityOfService: qualityOfService
                 )
+            }
+        }
+
+        if QuotaRefreshDecision.needsQuotaOnlyTick(
+            payloadRefreshDue: shouldForceRefresh,
+            payloadSkippedUnchanged: skippedUnchangedUsageRefresh
+        ) {
+            Task { [weak self] in
+                _ = await self?.refreshLiveQuotaProgressIfDue(force: forceQuota)
             }
         }
 
