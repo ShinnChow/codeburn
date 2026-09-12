@@ -8,7 +8,7 @@ import { FS_SCAN_CONCURRENCY, mapWithConcurrency, readSessionLines } from './fs-
 import { billableOutputTokens, calculateCost, calculateLocalModelSavings, getShortModelName, isProxiedPath, getProxyPathsConfigHash, getModelAliasesConfigHash, getPriceOverridesConfigHash, getLocalModelSavingsConfigHash } from './models.js'
 import { resolveSubagentAttribution, sessionIdentity } from './sessions-report.js'
 import { normalizeContentBlocks, flatSlice, flatString } from './content-utils.js'
-import { discoverAllSessions, getProvider } from './providers/index.js'
+import { discoverAllSessions, discoverAllSessionsWithFailures, getProvider } from './providers/index.js'
 import { flushCodexCache, readCachedCodexResults, withCodexCacheDirectory, writeCachedCodexResults } from './codex-cache.js'
 import { antigravityCascadeIdFromPath, flushAntigravityCache, shouldReparseAntigravitySource } from './providers/antigravity.js'
 import { getClaudeConfigDirs, getDesktopSessionsDirs } from './providers/claude.js'
@@ -35,6 +35,7 @@ import {
   isCacheDirty,
   loadCache,
   markCacheDirty,
+  markProviderComplete,
   monthScopeForRange,
   reconcileFile,
   saveCache,
@@ -3497,7 +3498,10 @@ export async function parseProviderSources(
   try {
     for (const { source, fp } of changedSources) {
       if (dateRange) {
-        if (fp.mtimeMs < dateRange.start.getTime()) continue
+        if (fp.mtimeMs < dateRange.start.getTime()) {
+          dateFloorSkippedProviders.add(providerName)
+          continue
+        }
       }
       filesParsedFromSource++
 
@@ -5227,6 +5231,13 @@ export async function computeCorpusFingerprint(providerFilter?: string): Promise
 // new data, so the run must not report hydration complete even in write mode.
 let deferredRetryableSource = false
 
+// Providers for which this run left an uncached source unparsed because its
+// mtime predates the requested range. The scan still reached the end, but only
+// for sources modified since `dateRange.start` — which is exactly what the
+// per-provider completeness floor records, so a later WIDER query re-enters
+// cold hydration instead of trusting a cache that never saw those files.
+const dateFloorSkippedProviders = new Set<string>()
+
 // One command invocation that renders a dashboard asks for several ranges that
 // differ only in where they END — the scan range runs to end-of-day, the
 // durable headline re-anchors on its own `new Date()`. The exact-key memo needs
@@ -5402,8 +5413,8 @@ export function parseAllSessions(dateRange?: DateRange, providerFilter?: string)
   return withCodexCacheDirectory(codexCacheDir, () => parseAllSessionsInCacheScope(dateRange, providerFilter))
 }
 
-function canServeCompleteSnapshot(cache: SessionCache, providerFilter?: string): boolean {
-  if (!isCacheComplete(cache)) return false
+function canServeCompleteSnapshot(cache: SessionCache, providerFilter?: string, sinceMs?: number): boolean {
+  if (!isCacheComplete(cache, providerFilter, sinceMs)) return false
   const sections = providerFilter && providerFilter !== 'all'
     ? ([[providerFilter, cache.providers[providerFilter]]] as const).filter((entry): entry is readonly [string, ProviderSection] => entry[1] != null)
     : Object.entries(cache.providers)
@@ -5413,7 +5424,7 @@ function canServeCompleteSnapshot(cache: SessionCache, providerFilter?: string):
 
 export async function isCompleteSessionSnapshotAvailable(dateRange: DateRange, providerFilter?: string): Promise<boolean> {
   const diskCache = await loadCache(monthScopeForRange(dateRange.start, dateRange.end))
-  return canServeCompleteSnapshot(diskCache, providerFilter)
+  return canServeCompleteSnapshot(diskCache, providerFilter, dateRange.start.getTime())
 }
 
 async function parseAllSessionsInCacheScope(dateRange?: DateRange, providerFilter?: string): Promise<ProjectSummary[]> {
@@ -5461,11 +5472,12 @@ async function parseAllSessionsInCacheScope(dateRange?: DateRange, providerFilte
   // a proxied key emitted under two providers the attribution can land on a
   // different provider than a full load would pick.
   const loadScope = dateRange ? monthScopeForRange(dateRange.start, dateRange.end) : undefined
+  const rangeStartMs = dateRange?.start.getTime()
   const cacheLoadStarted = performance.now()
   let diskCache = await loadCache(loadScope)
   await cleanupOrphanedTempFiles()
   if (process.env['CODEBURN_VERBOSE'] === '1') {
-    process.stderr.write(`codeburn: startup timing cache-load=${(performance.now() - cacheLoadStarted).toFixed(1)}ms complete=${isCacheComplete(diskCache)}\n`)
+    process.stderr.write(`codeburn: startup timing cache-load=${(performance.now() - cacheLoadStarted).toFixed(1)}ms complete=${isCacheComplete(diskCache, providerFilter, rangeStartMs)}\n`)
   }
 
   // Cold-hydration coordination (advisory, cross-process). Engages whenever the
@@ -5476,10 +5488,10 @@ async function parseAllSessionsInCacheScope(dateRange?: DateRange, providerFilte
   // If another live process is already hydrating, wait for it, then reload the
   // now-warm cache instead of double-parsing. Never a correctness gate: on any
   // doubt it proceeds unlocked.
-  if (!isCacheComplete(diskCache)) {
+  if (!isCacheComplete(diskCache, providerFilter, rangeStartMs)) {
     const hydration = await beginColdHydration(true)
     if (hydration.waited) diskCache = await loadCache(loadScope)
-    const isCold = !isCacheComplete(diskCache)
+    const isCold = !isCacheComplete(diskCache, providerFilter, rangeStartMs)
     try {
       return await runParse(key, diskCache, dateRange, providerFilter, { isCold, burstSig, parseStartedAt })
     } finally {
@@ -5487,7 +5499,7 @@ async function parseAllSessionsInCacheScope(dateRange?: DateRange, providerFilte
     }
   }
 
-  if (firstPaintPrefersCompleteSnapshot && canServeCompleteSnapshot(diskCache, providerFilter)) {
+  if (firstPaintPrefersCompleteSnapshot && canServeCompleteSnapshot(diskCache, providerFilter, rangeStartMs)) {
     return runParse(key, diskCache, dateRange, providerFilter, {
       readOnly: true,
       snapshotOnly: true,
@@ -5584,9 +5596,13 @@ async function runParseInner(
   readOnlyServedStale = false
   deferredRetryableSource = false
   firstPaintDeferredThisRun = 0
+  dateFloorSkippedProviders.clear()
   const seenMsgIds = new Set<string>()
   const seenKeys = new Set<string>()
-  const allSources = snapshotOnly ? [] : await discoverAllSessions(providerFilter)
+  const discovery = snapshotOnly
+    ? { sources: [], failedProviders: [] }
+    : await discoverAllSessionsWithFailures(providerFilter)
+  const allSources = discovery.sources
   traceTiming('discovery', ` sources=${allSources.length}`)
 
   const claudeSources = allSources.filter(s => s.provider === 'claude')
@@ -5704,27 +5720,34 @@ async function runParseInner(
   // background fill) has to come back cold and finish the job. A floored run
   // that deferred NOTHING parsed exactly what an unfloored run would have, so
   // it keeps the normal stamp.
+  //
+  // What the stamp records is what this run actually WALKED, on both axes a
+  // scan can be scoped on (#912). A `--provider X` run saw X and nothing else,
+  // so it marks X's section and leaves the whole-cache flag — the one that
+  // vouches for providers with no section at all — to an unscoped run. A ranged
+  // run left every uncached source older than the range unparsed, so the
+  // providers that skipped one record the range start as their completeness
+  // floor rather than claiming all of history. And a provider whose discovery
+  // threw contributed an empty source list that means "unknown", not "empty",
+  // so it is not marked at all.
   const deferredForFirstPaint = firstPaintDeferredThisRun > 0
-  const wasComplete = isCacheComplete(diskCache)
-  // A provider-scoped run walks only its own provider's sessions, so it never
-  // saw whatever the providers it skipped hold on disk. Stamping the WHOLE
-  // cache complete off that partial view writes a wrong "done" to disk (#912):
-  // per the marker's own contract above, a complete cache stops being re-read
-  // as cold, so the unscanned providers are not revisited and the gap stops
-  // looking like a gap. The guard is conditioned on real on-disk data, not on
-  // scoping alone: when every provider the run skipped has NO discoverable
-  // sessions, the scoped run really did see the whole corpus (a claude-only
-  // machine, and exactly what the warm-refresh snapshot tests rely on), so the
-  // stamp is correct and stands. Discovery here is a bounded directory walk,
-  // not a parse — the scoping win (skipping the other providers' PARSE) holds.
+  const rangeStartMs = dateRange?.start.getTime()
   const scopedRun = !!providerFilter && providerFilter !== 'all'
-  let skippedProviderHasSessions = false
-  if (scopedRun && !readOnly && !wasComplete && !deferredForFirstPaint) {
-    const corpusSources = await discoverAllSessions()
-    skippedProviderHasSessions = corpusSources.some(s => s.provider !== providerFilter)
+  const discoveryFailed = new Set(discovery.failedProviders)
+  let completenessChanged = false
+  if (!readOnly && !deferredForFirstPaint) {
+    const walked = scopedRun ? [providerFilter!] : Object.keys(diskCache.providers)
+    for (const provider of walked) {
+      if (discoveryFailed.has(provider)) continue
+      const floor = dateFloorSkippedProviders.has(provider) ? rangeStartMs : undefined
+      if (markProviderComplete(diskCache, provider, floor)) completenessChanged = true
+    }
+    if (!scopedRun && discoveryFailed.size === 0 && diskCache.complete !== true) {
+      diskCache.complete = true
+      completenessChanged = true
+    }
   }
-  if (!readOnly && !wasComplete && !deferredForFirstPaint && !skippedProviderHasSessions) diskCache.complete = true
-  if (!readOnly && (isCacheDirty(diskCache) || (!wasComplete && !deferredForFirstPaint))) {
+  if (!readOnly && (isCacheDirty(diskCache) || completenessChanged)) {
     try {
       const published = await saveCache(diskCache, refreshLock?.verifyStillOwner)
       if (!published) throw new RefreshFenceLostError()
