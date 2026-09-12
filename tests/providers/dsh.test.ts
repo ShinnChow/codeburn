@@ -249,10 +249,85 @@ describe('dsh provider - session discovery', () => {
     expect(await createDshProvider(tmpDir).discoverSessions()).toEqual([])
   })
 
-  it('rejects a filename/header generation mismatch', async () => {
+  it('rejects a filename/header generation mismatch and counts it as skipped', async () => {
     await writeVersionedSession(3, '--home-u-proj--', 'session-mismatch', [versionedHeader(2)])
 
-    expect(await createDshProvider(tmpDir).discoverSessions()).toEqual([])
+    const skipped: number[] = []
+    expect(await createDshProvider(tmpDir).discoverSessions(v => { skipped.push(v) })).toEqual([])
+    expect(skipped).toEqual([3])
+  })
+
+  it('counts an unreadable header as skipped', async () => {
+    const dir = join(tmpDir, 'sessions', '--home-u-proj--', 'session-unreadable')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'session.v3.jsonl'), '{broken\n')
+
+    const skipped: number[] = []
+    expect(await createDshProvider(tmpDir).discoverSessions(v => { skipped.push(v) })).toEqual([])
+    expect(skipped).toEqual([3])
+  })
+
+  it('orders generations numerically, not lexically', async () => {
+    const dir = join(tmpDir, 'sessions', '--home-u-proj--', 'session-v10')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'session.v3.jsonl'), versionedHeader(3, { id: 'session-v10' }) + '\n')
+    await writeFile(join(dir, 'session.v10.jsonl'), JSON.stringify({ type: 'session', version: 10 }) + '\n')
+
+    const skipped: number[] = []
+    expect(await createDshProvider(tmpDir).discoverSessions(v => { skipped.push(v) })).toEqual([])
+    expect(skipped).toEqual([10])
+  })
+
+  it('reads session.v0 as the unversioned generation and session.v03 as generation 3', async () => {
+    const zero = join(tmpDir, 'sessions', '--home-u-proj--', 'session-v0')
+    const padded = join(tmpDir, 'sessions', '--home-u-proj--', 'session-v03')
+    await mkdir(zero, { recursive: true })
+    await mkdir(padded, { recursive: true })
+    await writeFile(join(zero, 'session.v0.jsonl'), sessionHeader({ id: 'session-v0', cwd: '/home/u/proj' }) + '\n')
+    await writeFile(join(padded, 'session.v03.jsonl'), versionedHeader(3, { id: 'session-v03' }) + '\n')
+
+    const sessions = await createDshProvider(tmpDir).discoverSessions()
+
+    expect(sessions.map(s => s.path).sort()).toEqual([join(padded, 'session.v03.jsonl'), join(zero, 'session.v0.jsonl')].sort())
+  })
+
+  it.each([
+    ['session.v03.jsonl', 3],
+    ['session.v99999999999999999999.jsonl', 1e20],
+  ])('skips and counts a session whose generation filename %s is ambiguous', async (name, expected) => {
+    const dir = join(tmpDir, 'sessions', '--home-u-proj--', 'session-ambiguous')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'session.v3.jsonl'), versionedHeader(3, { id: 'session-ambiguous' }) + '\n')
+    await writeFile(join(dir, name), versionedHeader(3, { id: 'session-ambiguous' }) + '\n')
+
+    const skipped: number[] = []
+    expect(await createDshProvider(tmpDir).discoverSessions(v => { skipped.push(v) })).toEqual([])
+    expect(skipped).toEqual([expected])
+  })
+
+  it('explains missing zstd support once instead of naming every compressed log', async () => {
+    for (const id of ['one', 'two', 'three', 'four', 'five']) {
+      const dir = join(tmpDir, 'sessions', '--home-u-proj--', id)
+      await mkdir(dir, { recursive: true })
+      await writeFile(join(dir, 'session.v3.jsonl.zstd'), 'not zstd')
+    }
+    const zlibExports = zlib as unknown as Record<string, unknown>
+    const original = zlibExports['zstdDecompressSync']
+    delete zlibExports['zstdDecompressSync']
+    const warnings = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    try {
+      vi.resetModules()
+      const { createDshProvider: create } = await import('../../src/providers/dsh.js')
+      const skipped: number[] = []
+      expect(await create(tmpDir).discoverSessions(v => { skipped.push(v) })).toEqual([])
+      expect(skipped).toEqual([3, 3, 3, 3, 3])
+      expect(warnings.mock.calls.map(([m]) => String(m)))
+        .toEqual(['codeburn: DSH sessions need Node >= 22.15 (zstd support); skipping DSH usage.\n'])
+    } finally {
+      warnings.mockRestore()
+      if (original !== undefined) zlibExports['zstdDecompressSync'] = original
+      vi.resetModules()
+    }
   })
 
   it('returns empty for a non-existent home', async () => {
