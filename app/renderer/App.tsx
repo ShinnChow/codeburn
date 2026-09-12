@@ -698,6 +698,9 @@ function AppMain() {
       .then(filter => {
         if (cancelled) return
         const active = filter.project.length > 0 || filter.exclude.length > 0
+        // reportMemoKey has no filter component, so a snapshot memoised under
+        // the other scope would repaint until the next fetch lands.
+        if (active !== initialProjectFiltered()) clearPolledMemo()
         setProjectFiltered(active)
         persistProjectFiltered(active)
       })

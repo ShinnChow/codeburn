@@ -508,6 +508,28 @@ describe('App shortcuts', () => {
     await waitFor(() => expect(localStorage.getItem('codeburn.projectFiltered')).toBe('1'))
   })
 
+  // reportMemoKey carries no filter component, so an entry memoised under the
+  // other scope repaints until the next fetch lands. Clear on the change only:
+  // clearing on every poll would throw away the instant-switch memo wholesale.
+  it('clears the instant-switch memo once when the filter changes outside the app', async () => {
+    localStorage.setItem('codeburn.projectFiltered', '0')
+    mocks.getProjectFilter.mockResolvedValue({ project: [], exclude: ['my-company'] })
+    mocks.getOverview.mockResolvedValue(overviewPayload())
+    primePolledMemo('sentinel-filter-key', { stale: true })
+
+    render(<App />)
+
+    await waitFor(() => expect(localStorage.getItem('codeburn.projectFiltered')).toBe('1'))
+    await waitFor(() => expect(hasPolledMemo('sentinel-filter-key')).toBe(false))
+
+    // The filter now matches what is persisted: further polls must leave it alone.
+    primePolledMemo('sentinel-filter-key', { stale: true })
+    const calls = mocks.getOverview.mock.calls.length
+    fireEvent.keyDown(document, { key: 'r', metaKey: true })
+    await waitFor(() => expect(mocks.getOverview.mock.calls.length).toBeGreaterThan(calls))
+    expect(hasPolledMemo('sentinel-filter-key')).toBe(true)
+  })
+
   it('records the filter for the next boot when the pane is empty', async () => {
     render(<App />)
     await waitFor(() => expect(localStorage.getItem('codeburn.projectFiltered')).toBe('0'))
