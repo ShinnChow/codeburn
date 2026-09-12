@@ -33,7 +33,7 @@ import { pairingCode } from './sharing/pairing.js'
 import { ShareController } from './sharing/share-controller.js'
 import { getSharingDir, loadRemotes, saveRemotes } from './sharing/store.js'
 import type { UsageQuery } from './sharing/share-server.js'
-import { formatDateRangeLabel, parseDateRangeFlags, parseDayFlag, parseDaysFlag, getDateRange, toPeriod, type Period } from './cli-date.js'
+import { formatDateRangeLabel, parseDateRangeFlags, parseDayFlag, parseDaysFlag, getDateRange, periodInfoFromQuery, toPeriod, type Period } from './cli-date.js'
 import { runOptimize } from './optimize.js'
 import { registerActCommands } from './act/cli.js'
 import { registerGuardCommands } from './guard/cli.js'
@@ -1077,6 +1077,11 @@ program
   .option('--no-open', 'Do not open the browser automatically')
   .action(async (opts) => {
     assertProvider(opts.provider, 'web')
+    if (opts.project.length > 0 || opts.exclude.length > 0) {
+      const { range } = periodInfoFromQuery({ period: opts.period, from: opts.from, to: opts.to }, 'today')
+      const parsed = await parseAllSessions(range, opts.provider)
+      await reportUnmatchedProjectPatterns(parsed, opts.project, opts.exclude, () => cachedProjectIdentitiesForRange(range))
+    }
     await runWebDashboard({
       period: opts.period,
       provider: opts.provider,
@@ -2242,7 +2247,7 @@ program
     await loadPricing()
     const { range, label } = getDateRange(opts.period)
     if (opts.format === 'json') {
-      const { aggregateModelStats, buildCompareJson, findModelStat, renderCompareJson, scanSelfCorrections } = await import('./compare-stats.js')
+      const { aggregateModelStats, buildCompareJson, findModelStat, projectSessionIds, renderCompareJson, scanSelfCorrections } = await import('./compare-stats.js')
       const parsed = await parseAllSessions(range, opts.provider)
       await reportUnmatchedProjectPatterns(parsed, opts.project, opts.exclude, () => cachedProjectIdentitiesForRange(range))
       const projects = filterProjectsByName(parsed, opts.project, opts.exclude)
@@ -2254,7 +2259,8 @@ program
         const sessions = await provider.discoverSessions()
         for (const session of sessions) dirs.push(session.path)
       }
-      const corrections = await scanSelfCorrections(dirs)
+      const scope = opts.project.length > 0 || opts.exclude.length > 0 ? projectSessionIds(projects) : undefined
+      const corrections = await scanSelfCorrections(dirs, scope)
       for (const model of models) {
         model.selfCorrections = corrections.get(model.model) ?? 0
       }
