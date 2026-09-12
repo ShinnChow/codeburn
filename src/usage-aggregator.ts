@@ -500,10 +500,19 @@ function unionDaysForPeriod(
   // caller makes for itself. The cache day's own `carried` flag is the only
   // provenance there is: re-flagging here would mark every date the live parse
   // agrees on (the common case) as preserved from expired logs.
-  const cachedDates = new Set(historicalDays.map(d => d.date))
-  const liveForCachedDates = liveHistoricalDays.filter(d =>
-    cachedDates.has(d.date) && (!daysSelection || daysSelection.has(d.date)),
-  )
+  // Only days a live slice could actually win are handed to the merge. On a
+  // healthy cache that is none, so the lifetime period skips cloning every day
+  // it holds — and a date the cache already explains is passed through as the
+  // cache wrote it rather than rebuilt from a live day it would have to
+  // reconstruct back to the same numbers.
+  const cachedByDate = new Map(historicalDays.map(d => [d.date, d]))
+  const liveForCachedDates = liveHistoricalDays.filter(d => {
+    if (daysSelection && !daysSelection.has(d.date)) return false
+    const cached = cachedByDate.get(d.date)
+    return cached != null && Object.entries(d.providers).some(
+      ([provider, slice]) => slice.calls > (Object.hasOwn(cached.providers, provider) ? cached.providers[provider].calls : 0),
+    )
+  })
   const reconciledDays = liveForCachedDates.length > 0
     ? mergeDayEntries(liveForCachedDates, historicalDays, false, undefined, 'prefer-richer')
     : historicalDays
@@ -583,8 +592,9 @@ export function buildDurableOverviewFromNormalizedIndex(
     // The shared cache can be complete for a date while lacking this selected
     // provider's slice (for example, Claude was cached before Codex appeared).
     // Fill only that absent slice from the provider-scoped normalized index.
-    // An existing slice remains authoritative, retaining carried/expired money
-    // and preventing the surviving source from being counted twice.
+    // An existing slice is authoritative unless the live parse explains more of
+    // it (the reconcile above), which retains carried/expired money and prevents
+    // the surviving source from being counted twice.
     return normalized && Object.hasOwn(normalized.providers, pf)
       ? sliceDayToProvider(normalized, pf)
       : sliceDayToProvider(day, pf)
