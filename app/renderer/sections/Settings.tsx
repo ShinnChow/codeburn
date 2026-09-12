@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { Hint } from '../components/Hint'
 import { CliErrorText, cliErrorDisplay } from '../components/CliErrorPanel'
@@ -293,6 +293,7 @@ function projectVisible(project: ProjectRow, filter: ProjectFilter): boolean {
 function ProjectsPane({ refreshToken, onConfigMutated }: { refreshToken: number; onConfigMutated?: () => void }) {
   const [actionNonce, setActionNonce] = useState(0)
   const [pattern, setPattern] = useState('')
+  const [search, setSearch] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   // Lifetime, and not the period on screen: the filter applies to every screen
@@ -309,7 +310,16 @@ function ProjectsPane({ refreshToken, onConfigMutated }: { refreshToken: number;
   })
   const saved = usePolled<ProjectFilter>(() => codeburn.getProjectFilter(), [refreshToken, actionNonce])
   const filter = saved.data ?? NO_PROJECT_FILTER
-  const projects = report.data?.projects ?? []
+  // Costliest first: a lifetime list runs to thousands of rows here, and the
+  // ones worth hiding are the ones with spend on them.
+  const projects = useMemo(
+    () => [...(report.data?.projects ?? [])].sort((a, b) => (b.cost ?? 0) - (a.cost ?? 0)),
+    [report.data],
+  )
+  const needle = search.trim().toLowerCase()
+  const shown = needle
+    ? projects.filter(project => project.name.toLowerCase().includes(needle) || project.path.toLowerCase().includes(needle))
+    : projects
 
   // One write at a time, or a second click drops the first.
   const apply = (next: ProjectFilter, clearInput = false): void => {
@@ -349,11 +359,16 @@ function ProjectsPane({ refreshToken, onConfigMutated }: { refreshToken: number;
       <button className="btnp r" disabled={busy} onClick={() => apply({ ...filter, project: [] })}>Show all</button>
     </div></div>}
     <div className="card"><div className="about-sec set-last-sec">
+      {projects.length > 0 && <div className="set-filter-form set-search-form">
+        <input aria-label="Search projects" className="set-input set-mono" placeholder="search projects…" value={search} onChange={event => setSearch(event.target.value)} />
+        {needle && <span className="set-cap">{shown.length.toLocaleString()} of {projects.length.toLocaleString()}</span>}
+      </div>}
       {report.error ? <SettingsErrorText error={report.error} />
         : saved.error ? <SettingsErrorText error={saved.error} />
         : !report.data || !saved.data ? <p className="set-cap">Loading projects…</p>
         : projects.length === 0 ? <p className="set-cap">No projects detected yet.</p>
-        : projects.map(project => {
+        : shown.length === 0 ? <p className="set-cap">No project matches that search.</p>
+        : shown.map(project => {
           const visible = projectVisible(project, filter)
           const pattern_ = projectPattern(project)
           return <div className="about-row" key={pattern_}>

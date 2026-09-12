@@ -195,6 +195,37 @@ describe('Settings', () => {
     expect(mocks.getUnfilteredProjects).toHaveBeenCalledTimes(1)
   })
 
+  // A lifetime list runs to thousands of rows on a real machine, so the pane
+  // leads with the costliest and narrows on a substring of the name or path.
+  it('sorts projects by lifetime cost and narrows them by a substring search', async () => {
+    mocks.getUnfilteredProjects.mockResolvedValue({
+      projects: [
+        { name: 'shop-ops', path: '/Users/x/ecommerce/shop-ops', cost: 4.2, sessions: 3 },
+        { name: 'my-company', path: '/Users/x/Web/work/my-company', cost: 28.09, sessions: 16 },
+        { name: 'notes-app', path: '/Users/x/Web/Github/notes-app', cost: 1.5, sessions: 1 },
+      ],
+    })
+    const user = userEvent.setup()
+    render(<Settings period="month" />)
+    await user.click(screen.getByRole('button', { name: 'Projects' }))
+    await screen.findByRole('switch', { name: 'Show /Users/x/Web/work/my-company' })
+    expect(screen.getAllByRole('switch').map(node => node.getAttribute('aria-label'))).toEqual([
+      'Show /Users/x/Web/work/my-company',
+      'Show /Users/x/ecommerce/shop-ops',
+      'Show /Users/x/Web/Github/notes-app',
+    ])
+
+    await user.type(screen.getByRole('textbox', { name: 'Search projects' }), 'ECOM')
+    expect(screen.getAllByRole('switch').map(node => node.getAttribute('aria-label'))).toEqual([
+      'Show /Users/x/ecommerce/shop-ops',
+    ])
+    expect(screen.getByText('1 of 3')).toBeInTheDocument()
+
+    await user.clear(screen.getByRole('textbox', { name: 'Search projects' }))
+    expect(screen.getAllByRole('switch')).toHaveLength(3)
+    expect(screen.queryByText('1 of 3')).not.toBeInTheDocument()
+  })
+
   it('switches panes from the rail and renders the completed Plans pane', async () => {
     const user = userEvent.setup()
     render(<Settings period="month" />)
