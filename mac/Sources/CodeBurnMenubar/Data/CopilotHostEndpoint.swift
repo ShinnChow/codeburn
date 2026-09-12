@@ -44,6 +44,7 @@ enum CopilotHostEndpoint {
     /// source carried none, which is dotcom.
     static func apiHost(for host: String?) -> String? {
         guard let host = normalize(host) else { return defaultAPIHost }
+        guard isHostname(host) else { return nil }
         if host == defaultHost || host == defaultAPIHost { return defaultAPIHost }
         // `api.<tenant>.ghe.com` is already the API host; a bare tenant host
         // gains the `api.` label.
@@ -51,6 +52,16 @@ enum CopilotHostEndpoint {
             return host.hasPrefix("api.") ? host : "api." + host
         }
         return nil
+    }
+
+    /// A URL delimiter that survives normalization would move the request off
+    /// the host the suffix check approved: `evil.com?.ghe.com` ends in
+    /// `.ghe.com` but builds a URL whose host is `api.evil.com`, which would
+    /// then receive the Authorization header.
+    private static func isHostname(_ host: String) -> Bool {
+        host.unicodeScalars.allSatisfy {
+            ("a"..."z").contains($0) || ("0"..."9").contains($0) || $0 == "." || $0 == "-"
+        }
     }
 
     /// The quota endpoint for a credential's host, or nil when the host is not

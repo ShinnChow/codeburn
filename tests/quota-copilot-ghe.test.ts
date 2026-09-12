@@ -72,6 +72,15 @@ describe('Copilot quota endpoint derivation', () => {
     expect(normalizeCopilotHost('  ')).toBeNull()
   })
 
+  it('refuses a host carrying a URL delimiter rather than pointing the request elsewhere', () => {
+    for (const crafted of ['evil.com?.ghe.com', 'evil.com#.ghe.com', 'github.com#.ghe.com', 'a b.ghe.com']) {
+      expect(copilotAPIHost(crafted)).toBeNull()
+      expect(copilotUsageEndpoint(crafted)).toBeNull()
+    }
+    // The same input before the fix resolved to a host of its own choosing.
+    expect(new URL('https://api.evil.com?.ghe.com/copilot_internal/user').host).toBe('api.evil.com')
+  })
+
   it('refuses to derive an endpoint for an unknown host', () => {
     expect(copilotAPIHost('github.acme-corp.net')).toBeNull()
     expect(copilotUsageEndpoint('github.acme-corp.net')).toBeNull()

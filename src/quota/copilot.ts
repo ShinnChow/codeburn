@@ -65,6 +65,11 @@ export function normalizeCopilotHost(raw: string | null | undefined): string | n
 export function copilotAPIHost(host: string | null | undefined): string | null {
   const normalized = normalizeCopilotHost(host)
   if (!normalized) return COPILOT_DEFAULT_API_HOST
+  // A URL delimiter that survives normalization would move the request off the
+  // host the suffix check approved: `evil.com?.ghe.com` ends in `.ghe.com` but
+  // builds a URL whose host is `api.evil.com`, which would then receive the
+  // Authorization header.
+  if (!/^[a-z0-9.-]+$/.test(normalized)) return null
   if (normalized === COPILOT_DEFAULT_HOST || normalized === COPILOT_DEFAULT_API_HOST) return COPILOT_DEFAULT_API_HOST
   if (normalized.endsWith(ENTERPRISE_CLOUD_SUFFIX) && normalized.length > ENTERPRISE_CLOUD_SUFFIX.length) {
     return normalized.startsWith('api.') ? normalized : `api.${normalized}`

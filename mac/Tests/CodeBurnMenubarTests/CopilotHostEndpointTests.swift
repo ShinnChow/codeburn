@@ -50,6 +50,20 @@ final class CopilotHostEndpointTests: XCTestCase {
         XCTAssertNil(CopilotHostEndpoint.apiHost(for: "ghe.com"))
     }
 
+    /// A credential-file key is untrusted text. A URL delimiter inside it
+    /// passes the `.ghe.com` suffix check but builds a URL pointing somewhere
+    /// else entirely, so the Authorization header would reach that host.
+    func testHostWithAURLDelimiterIsRefusedRatherThanRedirectingTheRequest() {
+        for crafted in ["evil.com?.ghe.com", "evil.com#.ghe.com", "github.com#.ghe.com",
+                        #"evil.com\.ghe.com"#, "a b.ghe.com", "evil%2e.ghe.com"] {
+            XCTAssertNil(CopilotHostEndpoint.apiHost(for: crafted), "accepted \(crafted)")
+            XCTAssertNil(CopilotHostEndpoint.usageURL(for: crafted), "accepted \(crafted)")
+        }
+        // The same input before the fix resolved to a host of its own choosing.
+        XCTAssertEqual(
+            URL(string: "https://api.evil.com?.ghe.com/copilot_internal/user")?.host, "api.evil.com")
+    }
+
     // MARK: - Host selection
 
     func testNoHostsSelectsNothing() {
