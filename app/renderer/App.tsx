@@ -686,7 +686,12 @@ function AppMain() {
     setProvider(value)
   }
 
-  // Re-read on config invalidation: another window can save the pane too.
+  // Re-read on config invalidation (another window can save the pane too), on a
+  // manual refresh, and on every overview poll. The main process honours a hand
+  // edit of app-filter.json the moment the file changes, so a renderer that only
+  // re-read on its own saves kept offering Combined while buildOverviewArgs had
+  // already dropped `--scope combined` — a local, filtered total under a
+  // "Combined · …" headline, which is the one reading the pane must never give.
   useEffect(() => {
     let cancelled = false
     void Promise.resolve().then(() => codeburn.getProjectFilter())
@@ -698,7 +703,7 @@ function AppMain() {
       })
       .catch(() => { /* an older preload has no getProjectFilter to honour */ })
     return () => { cancelled = true }
-  }, [snapshotRevision])
+  }, [snapshotRevision, refreshToken, overview.data])
 
   // Collapse the stored preference too, so clearing the filter later starts
   // from local instead of silently restoring a combined view.

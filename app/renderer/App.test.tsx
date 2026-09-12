@@ -493,6 +493,21 @@ describe('App shortcuts', () => {
     await waitFor(() => expect(localStorage.getItem('codeburn.scope')).toBe('local'))
   })
 
+  // app-filter.json is read by the main process on every fetch, so a hand edit
+  // lands there at once. A renderer that only re-read on its own saves kept
+  // Combined on screen over argv that had already dropped `--scope combined`.
+  it('collapses combined scope when the filter appears outside the app', async () => {
+    localStorage.setItem('codeburn.scope', 'combined')
+    localStorage.setItem('codeburn.projectFiltered', '0')
+    mocks.getProjectFilter.mockResolvedValueOnce({ project: [], exclude: [] })
+    mocks.getProjectFilter.mockResolvedValue({ project: [], exclude: ['my-company'] })
+    mocks.getOverview.mockResolvedValue(overviewPayload())
+    render(<App />)
+    await waitFor(() => expect(mocks.getOverview).toHaveBeenCalledWith('30days', 'all', undefined, undefined, undefined, 'combined'))
+    await waitFor(() => expect(localStorage.getItem('codeburn.scope')).toBe('local'))
+    await waitFor(() => expect(localStorage.getItem('codeburn.projectFiltered')).toBe('1'))
+  })
+
   it('records the filter for the next boot when the pane is empty', async () => {
     render(<App />)
     await waitFor(() => expect(localStorage.getItem('codeburn.projectFiltered')).toBe('0'))
