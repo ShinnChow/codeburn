@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -93,6 +93,32 @@ async function seedDayCacheOnly(): Promise<string> {
   return home
 }
 
+/** A project pair whose assistant turns all read as self-corrections. */
+async function seedHomeWithApologies(): Promise<string> {
+  const home = await mkdtemp(join(tmpdir(), 'codeburn-project-filter-cli-'))
+  homes.push(home)
+  const now = Date.now()
+  for (const [offset, project] of SIBLINGS.entries()) {
+    const dir = join(home, '.claude', 'projects', project.dir)
+    await mkdir(dir, { recursive: true })
+    // scanSelfCorrections dedupes on model+timestamp, so the siblings must not
+    // share one.
+    const lines = [1, 2].map(index => JSON.stringify({
+      type: 'assistant',
+      timestamp: new Date(now - (30 - index - offset * 5) * 60_000).toISOString(),
+      sessionId: project.session,
+      cwd: project.cwd,
+      message: {
+        type: 'message', role: 'assistant', model: 'claude-3-5-sonnet-20241022', id: `${project.session}-m${index}`,
+        content: [{ type: 'text', text: 'I apologize for the confusion.' }],
+        usage: { input_tokens: 90000, output_tokens: 12000, cache_creation_input_tokens: 0, cache_read_input_tokens: 300000 },
+      },
+    }))
+    await writeFile(join(dir, `${project.session}.jsonl`), lines.join('\n') + '\n', 'utf-8')
+  }
+  return home
+}
+
 function runCli(args: string[], home: string) {
   return spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', ...args], {
     cwd: process.cwd(),
@@ -102,7 +128,41 @@ function runCli(args: string[], home: string) {
   })
 }
 
+/** `web` never exits on its own: run it until the server announces itself. */
+function runServerCli(args: string[], home: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--import', 'tsx', 'src/cli.ts', ...args], {
+      cwd: process.cwd(),
+      env: { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), CODEBURN_CACHE_DIR: join(home, 'cache'), TZ: 'UTC' },
+    })
+    let stderr = ''
+    let stdout = ''
+    const stop = () => { child.kill('SIGKILL'); resolve(stderr) }
+    child.stderr.setEncoding('utf-8')
+    child.stdout.setEncoding('utf-8')
+    child.stderr.on('data', chunk => { stderr += chunk })
+    child.stdout.on('data', chunk => { stdout += chunk; if (stdout.includes('Press Ctrl+C to stop')) stop() })
+    child.on('error', reject)
+    child.on('close', () => resolve(stderr))
+  })
+}
+
 describe('--project / --exclude reach the reporting commands', () => {
+  it('compare scopes self-corrections to the filtered projects', async () => {
+    const home = await seedHomeWithApologies()
+
+    const all = runCli(['compare', '--format', 'json', '--period', '30days'], home)
+    expect(all.status).toBe(0)
+    const allStats = JSON.parse(all.stdout) as Array<{ selfCorrections: number }>
+    expect(allStats).toHaveLength(1)
+    expect(allStats[0]!.selfCorrections).toBe(4)
+
+    const filtered = runCli(['compare', '--format', 'json', '--period', '30days', '--project', '/Users/gone/app-kit'], home)
+    expect(filtered.status).toBe(0)
+    const filteredStats = JSON.parse(filtered.stdout) as Array<{ selfCorrections: number }>
+    expect(filteredStats[0]!.selfCorrections).toBe(2)
+  })
+
   it('sessions keeps the sibling an absolute --exclude does not name', async () => {
     const home = await seedHome()
 
@@ -198,6 +258,16 @@ describe('a rooted pattern that names nothing is reported', () => {
 
     const typo = runCli(['sessions', '--format', 'json', '--period', '30days', '--project', `${SIBLINGS[0]!.cwd}s`], home)
     expect(typo.stderr).toContain(`no project in this period matches ${SIBLINGS[0]!.cwd}s`)
+  })
+
+  it('reports from web too, before the server starts', async () => {
+    const home = await seedHome()
+
+    const typo = await runServerCli(['web', '--no-open', '--port', '0', '--period', '30days', '--project', '/Users/gone/apps'], home)
+    expect(typo).toContain('no project in this period matches /Users/gone/apps')
+
+    const named = await runServerCli(['web', '--no-open', '--port', '0', '--period', '30days', '--project', '/Users/gone/app'], home)
+    expect(named).not.toContain('no project in this period matches')
   })
 
   it('reports a quoted ~ pattern the shell never expanded', async () => {
