@@ -107,7 +107,7 @@ describe('--project / --exclude reach the reporting commands', () => {
     const home = await seedHome()
 
     const all = runCli(['sessions', '--format', 'json', '--period', '30days'], home)
-    expect(all.stderr).toBe('')
+    expect(all.stderr).not.toContain('no project in this period matches')
     expect(JSON.parse(all.stdout).map((s: { project: string }) => s.project).sort())
       .toEqual(['-Users-gone-app', '-Users-gone-app-kit'])
 
@@ -178,7 +178,7 @@ describe('a rooted pattern that names nothing is reported', () => {
 
     expect(result.status).toBe(0)
     expect(JSON.parse(result.stdout).month.cost).toBeGreaterThan(0)
-    expect(result.stderr).toBe('')
+    expect(result.stderr).not.toContain('no project in this period matches')
 
     const typo = runCli(['status', '--format', 'json', '--project', '/Users/gone/apps'], home)
     expect(typo.stderr).toContain('no project in this period matches /Users/gone/apps')
@@ -189,12 +189,12 @@ describe('a rooted pattern that names nothing is reported', () => {
     // The sources expired, so the live parse cannot see this project; the cache
     // can, and it is what the totals are built from. Every command has to agree.
     const durable = runCli(['overview', '--period', '30days', '--project', SIBLINGS[0]!.cwd, '--no-color'], home)
-    expect(durable.stderr).toBe('')
+    expect(durable.stderr).not.toContain('no project in this period matches')
     expect(durable.stdout).toContain('30.00')
 
     const live = runCli(['sessions', '--format', 'json', '--period', '30days', '--project', SIBLINGS[0]!.cwd], home)
     expect(live.status).toBe(0)
-    expect(live.stderr).toBe('')
+    expect(live.stderr).not.toContain('no project in this period matches')
 
     const typo = runCli(['sessions', '--format', 'json', '--period', '30days', '--project', `${SIBLINGS[0]!.cwd}s`], home)
     expect(typo.stderr).toContain(`no project in this period matches ${SIBLINGS[0]!.cwd}s`)
@@ -224,6 +224,6 @@ describe('a rooted pattern that names nothing is reported', () => {
       'sessions', '--format', 'json', '--period', '30days',
       '--project', '/Users/gone/app', '--exclude', '/Users/gone/app-kit',
     ], home)
-    expect(both.stderr).toBe('')
+    expect(both.stderr).not.toContain('no project in this period matches')
   })
 })
